@@ -1,0 +1,31 @@
+# ignore raw data
+GameParams.data
+
+# python files
+__pycache__
+
+# ignore outputs
+GameParam*.json
+*.json
+
+split
+content/
+langs/
+gui/
+spaces/
+assets/
+crashes/
+
+# environment
+.env/
+game.path
+
+# pyinstaller
+dist/
+build/
+*.spec
+hidden-*.txt
+search.txt
+
+# setup.cfg
+*.egg-info/
