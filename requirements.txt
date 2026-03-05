@@ -3,3 +3,9 @@ pyinstaller
 build
 twine
 pycryptodome
+pycryptodomex
+packaging
+Pillow
+numpy
+imageio
+imageio-ffmpeg

@@ -1,3 +1,12 @@
+import json
+import os
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, Optional
+from urllib.parse import urlencode
+from urllib.request import urlopen
+
+
 # Map ID to human-readable names conversion
 MAP_NAMES = {
     # Standard maps
@@ -121,8 +130,103 @@ MAP_DISPLAY_NAMES = {
     "65_NA_yugoslavia": "Yugoslavia",
 }
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _battlearena_cache_path() -> Path:
+    cache_dir = _repo_root() / "content"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / "wg_battlearenas_cache.json"
+
+
+def _read_api_credentials() -> tuple[str, str]:
+    app_id = os.getenv("WWS_APP_ID", "").strip()
+    realm = os.getenv("WWS_REALM", "").strip().lower() or "eu"
+
+    if not app_id:
+        cfg_path = _repo_root() / "wws_api_config.json"
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            app_id = str(cfg.get("app_id", "")).strip()
+            realm = str(cfg.get("realm", realm)).strip().lower() or "eu"
+        except Exception:
+            pass
+    return app_id, realm
+
+
+def _base_url_for_realm(realm: str) -> str:
+    realm_urls = {
+        "na": "https://api.worldofwarships.com/wows/",
+        "eu": "https://api.worldofwarships.eu/wows/",
+        "asia": "https://api.worldofwarships.asia/wows/",
+        "ru": "https://api.worldofwarships.ru/wows/",
+    }
+    return realm_urls.get(realm, realm_urls["eu"])
+
+
+def _fetch_battlearenas_data() -> Dict[str, Dict[str, Any]]:
+    app_id, realm = _read_api_credentials()
+    if not app_id:
+        return {}
+
+    params = urlencode({"application_id": app_id})
+    url = f"{_base_url_for_realm(realm)}encyclopedia/battlearenas/?{params}"
+    try:
+        with urlopen(url, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        data = payload.get("data", {})
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return {}
+    return {}
+
+
+@lru_cache(maxsize=1)
+def _load_battlearenas_data() -> Dict[str, Dict[str, Any]]:
+    cache_path = _battlearena_cache_path()
+
+    # Try cache first.
+    try:
+        if cache_path.exists():
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(cached, dict) and cached:
+                return cached
+    except Exception:
+        pass
+
+    # Fetch from API.
+    data = _fetch_battlearenas_data()
+    if data:
+        try:
+            cache_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    return data
+
+
+def get_battlearena_entry(map_id: Any) -> Optional[Dict[str, Any]]:
+    try:
+        key = str(int(map_id))
+    except (TypeError, ValueError):
+        return None
+
+    data = _load_battlearenas_data()
+    entry = data.get(key)
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
 def get_map_name(map_display_name=None, map_id=None):
     """Get human-readable map name from either display name or ID"""
+    # Prefer official WG battlearena mapping when map_id is available.
+    if map_id is not None:
+        entry = get_battlearena_entry(map_id)
+        if entry and entry.get("name"):
+            return str(entry["name"])
+
     if map_display_name:
         return MAP_DISPLAY_NAMES.get(map_display_name, map_display_name.replace("_", " ").title())
     elif map_id:

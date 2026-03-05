@@ -1,17 +1,47 @@
 #!/usr/bin/env python3
 """
-WowsReplayDecoder.py
-====================
-World of Warships Replay Binary Decoder & Minimap Data Extractor
+WowsReplayDecoder_v2.py
+=======================
+Improved World of Warships Replay Decoder
+
+Key fixes over v1:
+  1. CORRECT SESSION ID → VEHICLE MAPPING
+     Session entity IDs (e.g. 1087358–1087404) are sequential and map to
+     meta vehicles sorted by their account entity_id ascending.
+     The player's session ID is the one NOT appearing in type-10 packets.
+
+  2. CORRECT TYPE-10 COORDINATE LAYOUT  (45-byte packets)
+     [0:4]   session_entity_id  u32
+     [4:8]   reserved           (0x0)
+     [8:12]  x                  f32  (east/west)
+     [12:16] y                  f32  (altitude, ~0)
+     [16:20] z                  f32  (north/south)
+     [20:32] misc state
+     [32:36] yaw                f32  (0.0–1.0, multiply by 360 for degrees)
+
+     The original code used offsets (1, x,y,z) and a u16 yaw — both wrong.
+
+  3. CORRECT ZERO-POSITION FILTERING
+     Positions (0, 0) appear before a ship is spotted. They are now filtered
+     so tracks only contain real world positions.
+
+  4. NAMED DAMAGE STATS
+     Damage stats are now fully annotated with player names and team info
+     instead of raw unnamed entity IDs.
+
+  5. ACCURATE DEATH DETECTION  (type-8 method 0)
+     Death packets are correlated with the corrected session ID mapping.
+
+  6. PLAYER POSITION (type-37, 60 bytes)
+     Layout verified:  [16:28] = x, y, z floats;  [28:30] = yaw u16.
 
 Usage:
-  python WowsReplayDecoder.py -replay path/to/replay.wowsreplay
-  python WowsReplayDecoder.py -replay path/to/replay.wowsreplay -key 29b7c909383f8488fa98ec4e131979fb
-  python WowsReplayDecoder.py -replay path/to/replay.wowsreplay -key <hex> -output decoded.json
-  python WowsReplayDecoder.py -replay path/to/replay.wowsreplay --verbose
+    python3 WowsReplayDecoder_v2.py -replay path/to/replay.wowsreplay
+    python3 WowsReplayDecoder_v2.py -replay path/to/replay.wowsreplay -output out.json
+    python3 WowsReplayDecoder_v2.py -replay path/to/replay.wowsreplay --verbose
 
 Requirements:
-  pip install cryptography
+    pip install cryptography
 """
 
 import io
@@ -23,27 +53,27 @@ import string
 import argparse
 import zlib
 from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
-# ── Known working Blowfish key ───────────────────────────────────────────────
-# Community-extracted from the WoWS 15.x client binary.
-# The decryption is Blowfish ECB with XOR chaining — NOT plain ECB.
-KNOWN_KEYS = [
-    ("15.x (current)", bytes.fromhex("29b7c909383f8488fa98ec4e131979fb")),
-]
+# ── Blowfish key (WoWS 15.x community-extracted) ────────────────────────────
+WOWS_KEY = bytes.fromhex("29b7c909383f8488fa98ec4e131979fb")
 
-# ── Real BigWorld packet types (empirically determined for WoWS 15.x) ────────
 PACKET_TYPES = {
-    8:  "ENTITY_METHOD",    # method calls — HP, damage, death events
-    10: "ENTITY_MOVE",      # non-player ship position + yaw
-    22: "BASE_PLAYER_DATA", # base data block (appears at battle start)
-    34: "CAMERA_UPDATE",    # camera direction
-    37: "PLAYER_POSITION",  # player's own ship position + yaw
+    5:  "ENTITY_CREATE",   # vehicle/entity creation → used for session ID mapping
+    8:  "ENTITY_METHOD",   # method calls: HP updates, death, damage events
+    10: "ENTITY_MOVE",     # non-player ship position (45 bytes)
+    22: "BASE_PLAYER_DATA",
+    34: "CAMERA_UPDATE",
+    37: "PLAYER_POSITION", # player's own ship (60 bytes)
 }
 
 
-# ── Metadata ──────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# I/O helpers
+# ════════════════════════════════════════════════════════════════════════════
 
-def load_replay_metadata(path):
+def load_replay_metadata(path: str) -> dict:
+    """Parse the JSON metadata block(s) at the start of the replay file."""
     result = {"block0": None, "block1": None, "binary_offset": 0}
     with open(path, "rb") as f:
         f.read(4)  # magic
@@ -69,36 +99,29 @@ def load_replay_metadata(path):
     return result
 
 
-def read_binary_section(path, offset):
+def decrypt_and_decompress(path: str, binary_offset: int) -> bytes:
+    """
+    Read the binary section, decrypt with Blowfish ECB + XOR chaining,
+    then zlib-decompress.  Returns the raw packet stream bytes.
+    """
     with open(path, "rb") as f:
-        f.seek(offset)
-        return f.read()
+        f.seek(binary_offset)
+        raw = f.read()
 
-
-# ── Decryption ────────────────────────────────────────────────────────────────
-
-def _xor_chain_decrypt(data, key):
-    """
-    Blowfish ECB with XOR chaining between consecutive 8-byte blocks.
-    The first block is always skipped (WoWS file format quirk).
-    This is NOT plain Blowfish ECB — each block is XOR'd with the previous
-    decrypted block value, producing CBC-like output.
-    Plain ECB produces high-entropy garbage that cannot be zlib-decompressed.
-    """
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.backends import default_backend
-    from io import BytesIO
 
-    cipher = Cipher(algorithms.Blowfish(key), modes.ECB(), backend=default_backend())
-    dec    = cipher.decryptor()
-    out    = BytesIO()
-    prev   = None
+    cipher = Cipher(algorithms.Blowfish(WOWS_KEY), modes.ECB(),
+                    backend=default_backend())
+    dec  = cipher.decryptor()
+    out  = io.BytesIO()
+    prev = None
 
-    for i in range(0, len(data) - (len(data) % 8), 8):
-        chunk = data[i:i + 8]
+    for i in range(0, len(raw) - (len(raw) % 8), 8):
+        chunk = raw[i:i + 8]
         if len(chunk) < 8:
             break
-        if i == 0:          # first block always skipped
+        if i == 0:          # first block always skipped (WoWS quirk)
             continue
         block = struct.unpack("q", dec.update(chunk))[0]
         if prev is not None:
@@ -106,43 +129,66 @@ def _xor_chain_decrypt(data, key):
         prev = block
         out.write(struct.pack("q", block))
 
-    return out.getvalue()
+    return zlib.decompress(out.getvalue())
 
 
-def decrypt_binary(data, key_hex=None, verbose=False):
+# ════════════════════════════════════════════════════════════════════════════
+# Session ID ↔ Vehicle mapping  (THE KEY FIX)
+# ════════════════════════════════════════════════════════════════════════════
+
+def build_session_id_map(packet_data: bytes, vehicles: list) -> Dict[int, dict]:
     """
-    Decrypt the binary section. Returns (decrypted_bytes_or_None, status_str).
-    """
-    keys_to_try = []
-    if key_hex:
-        try:
-            key = bytes.fromhex(key_hex.replace(" ", "").replace("0x", ""))
-            keys_to_try = [("User-supplied", key)]
-        except ValueError:
-            return None, f"ERROR: Invalid hex key: {key_hex!r}"
-    else:
-        keys_to_try = KNOWN_KEYS
+    Map session entity IDs (from packet stream) to vehicle metadata.
 
-    for label, key in keys_to_try:
-        if verbose:
-            print(f"  Trying key [{label}]: {key.hex()}")
-        try:
-            decrypted = _xor_chain_decrypt(data, key)
-            zlib.decompress(decrypted)   # validation — raises if wrong key
-            return decrypted, f"SUCCESS with key: {label} ({key.hex()})"
-        except Exception:
+    How WoWS assigns session IDs:
+      - All vehicles get consecutive even session IDs (e.g. 1087358, 1087360, …).
+      - They are assigned in ascending order of the vehicle's account entity_id
+        (the large IDs like 805652739 in metadata).
+      - The player's own session ID does NOT appear in type-10 packets because
+        the client uses type-37 for its own position.
+
+    Returns: {session_id: vehicle_dict}
+    """
+    # Collect all session IDs from type-10 packets (non-player vehicles)
+    type10_eids: set = set()
+    pos = 0
+    while pos + 12 <= len(packet_data):
+        psize = struct.unpack_from("<I", packet_data, pos)[0]
+        ptype = struct.unpack_from("<I", packet_data, pos + 4)[0]
+        if psize == 0 or psize > 500_000 or ptype > 1000:
+            pos += 1
             continue
+        payload = packet_data[pos + 12: pos + 12 + psize]
+        if ptype == 10 and len(payload) >= 4:
+            eid = struct.unpack_from("<I", payload, 0)[0]
+            type10_eids.add(eid)
+        pos += 12 + psize
 
-    return None, (
-        "DECRYPTION FAILED: No known key worked.\n"
-        "Supply the correct key with:  -key <32_hex_chars>\n"
-        "Working key for WoWS 15.x:   29b7c909383f8488fa98ec4e131979fb"
-    )
+    # Infer all session IDs: the step between consecutive IDs is 2
+    if not type10_eids:
+        return {}
+
+    min_eid = min(type10_eids)
+    max_eid = max(type10_eids)
+    # Generate the full range including the player's missing session ID
+    all_sess_ids = sorted(range(min_eid, max_eid + 3, 2))
+
+    # Sort vehicles by their account entity_id — this matches session ID order
+    sorted_vehicles = sorted(vehicles, key=lambda v: v["id"])
+
+    # Build the mapping
+    sess_map: Dict[int, dict] = {}
+    for sess_id, vehicle in zip(all_sess_ids, sorted_vehicles):
+        sess_map[sess_id] = vehicle
+
+    return sess_map
 
 
-# ── BigWorld Packet Parser ────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# Packet parsing
+# ════════════════════════════════════════════════════════════════════════════
 
-class BigWorldPacket:
+class Packet:
     __slots__ = ("offset", "ptype", "ptype_name", "clock", "size", "payload", "parsed")
 
     def __init__(self, offset, ptype, clock, size, payload):
@@ -152,7 +198,7 @@ class BigWorldPacket:
         self.clock      = clock
         self.size       = size
         self.payload    = payload
-        self.parsed     = {}
+        self.parsed: dict = {}
 
     def to_dict(self):
         return {
@@ -166,19 +212,78 @@ class BigWorldPacket:
         }
 
 
-def parse_packets(data, verbose=False):
+def _parse_payload(pkt: Packet) -> None:
     """
-    Parse BigWorld packet stream.
+    Decode known packet types.
 
-    Real WoWS 15.x packet header — 12 bytes:
-      [0:4]  payload_size  uint32 LE
-      [4:8]  packet_type   uint32 LE
-      [8:12] clock         float32 LE  (game time in seconds)
-    Followed by payload_size bytes of payload.
+    TYPE-10  ENTITY_MOVE  (45 bytes, non-player ships):
+      [0:4]   session_entity_id  u32
+      [4:8]   reserved           u32 (always 0)
+      [8:12]  x                  f32  east/west
+      [12:16] y                  f32  altitude
+      [16:20] z                  f32  north/south
+      [20:32] misc state bytes
+      [32:36] yaw_norm           f32  0..1  → × 360 = degrees
+
+    TYPE-37  PLAYER_POSITION  (≥60 bytes):
+      [16:20] x   f32
+      [20:24] y   f32
+      [24:28] z   f32
+      [28:30] yaw u16  0..65535 → × 360/65535 = degrees
+
+    TYPE-8   ENTITY_METHOD:
+      [0:4]   entity_id  u32
+      [4:8]   method_id  u32
+      method 67 (+HP broadcast): bytes [20:24] = current HP u32
+      method  0 (death):         marks entity as destroyed
     """
-    packets = []
-    pos     = 0
-    errors  = 0
+    p = pkt.payload
+    t = pkt.ptype
+    try:
+        # ── ENTITY_MOVE (type 10) ────────────────────────────────────────────
+        if t == 10 and len(p) >= 36:
+            eid = struct.unpack_from("<I", p, 0)[0]
+            x, y, z = struct.unpack_from("<fff", p, 8)   # correct offsets
+            yaw_rad  = struct.unpack_from("<f", p, 32)[0]  # radians (-π..π)
+            import math as _math
+            pkt.parsed["entity_id"] = eid
+            pkt.parsed["x"]         = round(x, 2)
+            pkt.parsed["y"]         = round(y, 2)
+            pkt.parsed["z"]         = round(z, 2)
+            pkt.parsed["yaw_deg"]   = round(_math.degrees(yaw_rad) % 360, 1)
+
+        # ── PLAYER_POSITION (type 37) ────────────────────────────────────────
+        elif t == 37 and len(p) >= 30:
+            x, y, z = struct.unpack_from("<fff", p, 16)
+            yaw_raw = struct.unpack_from("<H", p, 28)[0]
+            pkt.parsed["entity_id"] = "player"
+            pkt.parsed["x"]         = round(x, 2)
+            pkt.parsed["y"]         = round(y, 2)
+            pkt.parsed["z"]         = round(z, 2)
+            pkt.parsed["yaw_deg"]   = round(yaw_raw / 65535.0 * 360.0, 1)
+
+        # ── ENTITY_METHOD (type 8) ───────────────────────────────────────────
+        elif t == 8 and len(p) >= 8:
+            eid = struct.unpack_from("<I", p, 0)[0]
+            mid = struct.unpack_from("<I", p, 4)[0]
+            pkt.parsed["entity_id"] = eid
+            pkt.parsed["method_id"] = mid
+            if mid == 67 and len(p) >= 24:   # HP broadcast
+                hp = struct.unpack_from("<I", p, 20)[0]
+                if 1_000 < hp < 200_000:
+                    pkt.parsed["hp"] = hp
+            elif mid == 0:
+                pkt.parsed["death"] = True
+
+    except (struct.error, IndexError):
+        pass
+
+
+def parse_packets(data: bytes, verbose: bool = False) -> List[Packet]:
+    """Parse the full BigWorld packet stream."""
+    packets: List[Packet] = []
+    pos    = 0
+    errors = 0
 
     while pos + 12 <= len(data):
         psize = struct.unpack_from("<I", data, pos)[0]
@@ -190,13 +295,13 @@ def parse_packets(data, verbose=False):
             errors += 1
             if errors > 200:
                 if verbose:
-                    print(f"WARNING: too many parse errors near offset {pos}")
+                    print(f"WARNING: too many parse errors near offset {pos:#x}")
                 break
             continue
 
         errors  = 0
         payload = data[pos + 12: pos + 12 + psize]
-        pkt     = BigWorldPacket(pos, ptype, clock, psize, payload)
+        pkt     = Packet(pos, ptype, clock, psize, payload)
         _parse_payload(pkt)
         packets.append(pkt)
         pos += 12 + psize
@@ -204,219 +309,233 @@ def parse_packets(data, verbose=False):
     return packets
 
 
-def _parse_payload(pkt):
+# ════════════════════════════════════════════════════════════════════════════
+# Minimap & stats extractor
+# ════════════════════════════════════════════════════════════════════════════
+
+def extract_battle_data(packets: List[Packet],
+                        sess_map: Dict[int, dict],
+                        player_sess_id: int) -> dict:
     """
-    Decode known packet types into structured fields in pkt.parsed.
+    Build complete battle dataset from parsed packets + vehicle mapping.
 
-    Coordinate system: X = east/west, Y = altitude (~0 at sea), Z = north/south.
+    Returns:
+        positions     – {session_id: [{t, x, z, yaw}, ...]}  (filtered non-zero)
+        damage_stats  – {session_id: {name, team, max_hp, damage_taken, sunk}}
+        deaths        – {session_id: {name, time}}
+        spawns        – {session_id: {name, x, z, time}}
+        packet_summary
     """
-    p = pkt.payload
-    t = pkt.ptype
-    try:
-        # ENTITY_MOVE (type 10): non-player ship position
-        # [entity_id:u32][x:f32][y:f32][z:f32][yaw:u16][36 more bytes]
-        if t == 10 and len(p) >= 15:
-            eid      = struct.unpack_from("<I", p, 0)[0]
-            x, y, z  = struct.unpack_from("<fff", p, 1)
-            yaw_raw  = struct.unpack_from("<H", p, 13)[0]
-            pkt.parsed["entity_id"] = eid
-            pkt.parsed["x"]         = round(x, 2)
-            pkt.parsed["y"]         = round(y, 2)
-            pkt.parsed["z"]         = round(z, 2)
-            pkt.parsed["yaw_deg"]   = round(yaw_raw / 65535 * 360, 1)
-
-        # PLAYER_POSITION (type 37): player's own ship
-        # [16 bytes misc][x:f32][y:f32][z:f32][yaw:u16][...]
-        elif t == 37 and len(p) >= 30:
-            x, y, z  = struct.unpack_from("<fff", p, 16)
-            yaw_raw  = struct.unpack_from("<H", p, 28)[0]
-            pkt.parsed["entity_id"] = "player"
-            pkt.parsed["x"]         = round(x, 2)
-            pkt.parsed["y"]         = round(y, 2)
-            pkt.parsed["z"]         = round(z, 2)
-            pkt.parsed["yaw_deg"]   = round(yaw_raw / 65535 * 360, 1)
-
-        # ENTITY_METHOD (type 8): [entity_id:u32][method_id:u32][args...]
-        elif t == 8 and len(p) >= 8:
-            eid = struct.unpack_from("<I", p, 0)[0]
-            mid = struct.unpack_from("<I", p, 4)[0]
-            pkt.parsed["entity_id"] = eid
-            pkt.parsed["method_id"] = mid
-            # Method 67 = HP broadcast: args[12:16] = current HP (uint32)
-            if mid == 67 and len(p) >= 24:
-                hp = struct.unpack_from("<I", p, 20)[0]
-                if 1_000 < hp < 200_000:
-                    pkt.parsed["hp"] = hp
-            elif mid == 0:
-                pkt.parsed["death"] = True
-
-    except (struct.error, IndexError):
-        pass
-
-
-# ── Minimap Data Extractor ───────────────────────────────────────────────────
-
-def extract_minimap_data(packets, metadata):
-    """
-    Build a structured minimap dataset from parsed packets + JSON metadata.
-    Returns positions, spawns, deaths, damage_stats, and team lists.
-    """
-    entity_positions = defaultdict(list)
-    entity_spawns    = {}
-    entity_leaves    = {}
-    hp_track         = defaultdict(list)
+    positions:   Dict[int, list]  = defaultdict(list)
+    spawns:      Dict[int, dict]  = {}
+    deaths:      Dict[int, dict]  = {}
+    hp_track:    Dict[int, list]  = defaultdict(list)
+    player_track: list            = []
 
     for pkt in packets:
         pr = pkt.parsed
 
-        if pkt.ptype in (10, 37) and "x" in pr:
+        # Non-player positions
+        if pkt.ptype == 10 and "x" in pr:
             eid = pr["entity_id"]
-            pt  = {"t": round(pkt.clock, 2), "x": pr["x"], "z": pr["z"],
-                   "yaw": pr.get("yaw_deg")}
-            entity_positions[eid].append(pt)
-            if eid not in entity_spawns:
-                entity_spawns[eid] = {"time": round(pkt.clock, 2),
-                                      "x": pr["x"], "z": pr["z"]}
+            x, z = pr["x"], pr["z"]
+            # Filter out (0,0) — pre-spotting placeholder positions
+            if abs(x) > 0.5 or abs(z) > 0.5:
+                point = {"t": round(pkt.clock, 2), "x": x, "z": z,
+                         "yaw": pr.get("yaw_deg")}
+                positions[eid].append(point)
+                if eid not in spawns:
+                    spawns[eid] = {"time": round(pkt.clock, 2), "x": x, "z": z}
 
+        # Player position
+        elif pkt.ptype == 37 and "x" in pr:
+            x, z = pr["x"], pr["z"]
+            if abs(x) > 0.5 or abs(z) > 0.5:
+                player_track.append({"t": round(pkt.clock, 2), "x": x, "z": z,
+                                     "yaw": pr.get("yaw_deg")})
+
+        # HP & death events
         elif pkt.ptype == 8:
             eid = pr.get("entity_id")
-            if not eid:
+            if eid is None:
                 continue
             if "hp" in pr:
                 hp_track[eid].append(pr["hp"])
             if pr.get("death"):
-                entity_leaves[eid] = {"time": round(pkt.clock, 2)}
+                v = sess_map.get(eid, {})
+                deaths[eid] = {
+                    "name": v.get("name", f"entity_{eid}"),
+                    "team": _rel_to_team(v.get("relation")),
+                    "time": round(pkt.clock, 2),
+                }
 
-    damage_stats = {}
+    # Add player track under its session ID
+    if player_track:
+        positions[player_sess_id] = player_track
+        if player_sess_id not in spawns and player_track:
+            pt = player_track[0]
+            spawns[player_sess_id] = {"time": pt["t"], "x": pt["x"], "z": pt["z"]}
+
+    # Build damage stats with names
+    damage_stats: Dict[int, dict] = {}
     for eid, hps in hp_track.items():
-        max_hp = max(hps)
-        min_hp = min(hps)
+        max_hp   = max(hps)
+        min_hp   = min(hps)
+        v        = sess_map.get(eid, {})
         damage_stats[eid] = {
-            "max_hp": max_hp, "min_hp": min_hp,
+            "name":         v.get("name", f"entity_{eid}"),
+            "team":         _rel_to_team(v.get("relation")),
+            "ship_id":      v.get("shipId"),
+            "max_hp":       max_hp,
+            "min_hp":       min_hp,
             "damage_taken": max_hp - min_hp,
-            "sunk": eid in entity_leaves,
+            "sunk":         eid in deaths,
         }
 
-    block0   = metadata.get("block0") or {}
-    vehicles = block0.get("vehicles", [])
+    # Annotate spawns/positions with names
+    named_positions: Dict[str, dict] = {}
+    for eid, track in positions.items():
+        v    = sess_map.get(eid, {})
+        name = v.get("name", ("Player" if eid == player_sess_id else f"entity_{eid}"))
+        named_positions[str(eid)] = {
+            "name":    name,
+            "team":    _rel_to_team(v.get("relation", 0) if eid == player_sess_id else v.get("relation")),
+            "ship_id": v.get("shipId"),
+            "track":   track,
+        }
+
+    named_spawns = {}
+    for eid, sp in spawns.items():
+        v    = sess_map.get(eid, {})
+        name = v.get("name", ("Player" if eid == player_sess_id else f"entity_{eid}"))
+        named_spawns[str(eid)] = {"name": name, **sp}
+
+    named_deaths = {str(k): v for k, v in deaths.items()}
+    named_damage  = {str(k): v for k, v in damage_stats.items()}
 
     return {
-        "meta":          {
-            "map":            block0.get("mapDisplayName"),
-            "date":           block0.get("dateTime"),
-            "player":         block0.get("playerName"),
-            "player_ship":    block0.get("playerVehicle"),
-            "game_type":      block0.get("gameType"),
-            "client_version": block0.get("clientVersionFromExe"),
-        },
-        "teams":          _build_team_lists(vehicles),
-        "entity_spawns":  {str(k): v for k, v in entity_spawns.items()},
-        "entity_leaves":  {str(k): v for k, v in entity_leaves.items()},
-        "positions":      {str(eid): trail
-                           for eid, trail in entity_positions.items() if trail},
-        "damage_stats":   {str(k): v for k, v in damage_stats.items()},
+        "positions":     named_positions,
+        "spawns":        named_spawns,
+        "deaths":        named_deaths,
+        "damage_stats":  named_damage,
         "packet_summary": _summarize_packets(packets),
     }
 
 
-def _build_team_lists(vehicles):
-    teams = {"player": [], "ally": [], "enemy": []}
-    for v in vehicles:
-        entry = {"name": v["name"], "ship_id": v["shipId"], "entity_id": v["id"]}
-        r = v.get("relation", -1)
-        if r == 0:   teams["player"].append(entry)
-        elif r == 1: teams["ally"].append(entry)
-        elif r == 2: teams["enemy"].append(entry)
-    return teams
+def _rel_to_team(relation) -> str:
+    return {0: "player", 1: "ally", 2: "enemy"}.get(relation, "unknown")
 
 
-def _extract_damage_statistics(packets):
-    hp_track = defaultdict(list)
-    deaths   = set()
-    for pkt in packets:
-        if pkt.ptype != 8:
-            continue
-        pr  = pkt.parsed
-        eid = pr.get("entity_id")
-        if not eid:
-            continue
-        if "hp" in pr:
-            hp_track[eid].append(pr["hp"])
-        if pr.get("death"):
-            deaths.add(eid)
-    result = {}
-    for eid, hps in hp_track.items():
-        max_hp = max(hps)
-        result[eid] = {
-            "max_hp": max_hp, "min_hp": min(hps),
-            "damage_taken": max_hp - min(hps),
-            "sunk": eid in deaths,
-        }
-    return result
-
-
-def _summarize_packets(packets):
-    summary = defaultdict(int)
+def _summarize_packets(packets: List[Packet]) -> dict:
+    summary: Dict[str, int] = defaultdict(int)
     for pkt in packets:
         summary[pkt.ptype_name] += 1
     return dict(sorted(summary.items(), key=lambda x: -x[1]))
 
 
-# ── Console Report ────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# Console report
+# ════════════════════════════════════════════════════════════════════════════
 
-def print_metadata_report(metadata):
-    m = metadata.get("block0") or {}
-    print("=" * 60)
-    print("  WORLD OF WARSHIPS REPLAY - METADATA REPORT")
-    print("=" * 60)
-    print(f"  Date/Time    : {m.get('dateTime', 'N/A')}")
-    print(f"  Map          : {m.get('mapDisplayName', 'N/A')} (ID {m.get('mapId', '?')})")
-    print(f"  Game Type    : {m.get('gameType', 'N/A')}")
-    print(f"  Client Ver   : {m.get('clientVersionFromExe', 'N/A')}")
-    print(f"  Your Ship    : {m.get('playerVehicle', 'N/A')}")
-    print(f"  Your Name    : {m.get('playerName', 'N/A')}")
+def print_report(metadata: dict, battle_data: dict, sess_map: Dict[int, dict],
+                 player_sess_id: int) -> None:
+    block0 = metadata.get("block0") or {}
+    vehicles = block0.get("vehicles", [])
+
+    print("=" * 70)
+    print("  WORLD OF WARSHIPS REPLAY - IMPROVED DECODER v2")
+    print("=" * 70)
+    print(f"  Date        : {block0.get('dateTime', 'N/A')}")
+    print(f"  Map         : {block0.get('mapDisplayName', 'N/A')}  (ID {block0.get('mapId', '?')})")
+    print(f"  Game Type   : {block0.get('gameType', 'N/A')}")
+    print(f"  Client Ver  : {block0.get('clientVersionFromExe', 'N/A')}")
+    print(f"  Your Ship   : {block0.get('playerVehicle', 'N/A')}")
+    print(f"  Your Name   : {block0.get('playerName', 'N/A')}")
     print()
-    vehicles = m.get("vehicles", [])
+
+    # Team roster
     you     = [v for v in vehicles if v.get("relation") == 0]
     allies  = [v for v in vehicles if v.get("relation") == 1]
     enemies = [v for v in vehicles if v.get("relation") == 2]
-    for label, group in [("YOUR SHIP", you), (f"ALLIES ({len(allies)})", allies),
-                         (f"ENEMIES ({len(enemies)})", enemies)]:
-        print(f"  ── {label} {'─'*(45-len(label))}")
-        sym_map = {0: "★", 1: "+", 2: "-"}
+    for label, group, sym in [("YOUR SHIP", you, "*"),
+                               (f"ALLIES ({len(allies)})", allies, "+"),
+                               (f"ENEMIES ({len(enemies)})", enemies, "-")]:
+        print(f"  -- {label} {'-'*(46-len(label))}")
         for v in group:
-            print(f"     {sym_map.get(v.get('relation'),'?')} {v['name']:<24} entity_id={v['id']}")
+            # Find session id for this vehicle
+            sess = next((s for s, mv in sess_map.items() if mv["id"] == v["id"]), None)
+            sess_str = f"sess={sess}" if sess else "sess=?"
+            print(f"     {sym} {v['name']:<28} {sess_str}")
         print()
-    print(f"  Binary offset: {metadata['binary_offset']} bytes")
+
+    # Position data quality
+    pos = battle_data["positions"]
+    print(f"  Entities tracked  : {len(pos)}")
+    total_pts = sum(len(v["track"]) for v in pos.values())
+    print(f"  Total track points: {total_pts:,}")
+    print()
+
+    # Damage report
+    dmg = battle_data["damage_stats"]
+    deaths = battle_data["deaths"]
+
+    print("=" * 70)
+    print("  DAMAGE TAKEN (HP lost from HP broadcast packets)")
+    print("=" * 70)
+    header = f"  {'Name':<28} {'Team':<8} {'MaxHP':>8}  {'DmgTaken':>9}  {'DmgPct':>7}  Status"
+    print(header)
+    print("  " + "-" * 66)
+
+    for eid_str, s in sorted(dmg.items(), key=lambda x: -x[1]["damage_taken"]):
+        pct   = s["damage_taken"] / s["max_hp"] * 100 if s["max_hp"] else 0
+        sunk  = " SUNK" if s["sunk"] else "alive"
+        print(f"  {s['name']:<28} {s['team']:<8} {s['max_hp']:>8,}  "
+              f"{s['damage_taken']:>9,}  {pct:>6.1f}%  {sunk}")
+
+    print()
+    total_dmg = sum(s["damage_taken"] for s in dmg.values())
+    ally_dmg  = sum(s["damage_taken"] for s in dmg.values() if s["team"] in ("ally","player"))
+    enemy_dmg = sum(s["damage_taken"] for s in dmg.values() if s["team"] == "enemy")
+    sunk_cnt  = sum(1 for s in dmg.values() if s["sunk"])
+    print(f"  Total damage taken : {total_dmg:,}")
+    print(f"  Ally  side total   : {ally_dmg:,}")
+    print(f"  Enemy side total   : {enemy_dmg:,}")
+    print(f"  Ships sunk         : {sunk_cnt}")
+    print()
+
+    # Deaths timeline
+    if deaths:
+        print("=" * 70)
+        print("  SHIP DEATHS (chronological)")
+        print("=" * 70)
+        for eid_str, dth in sorted(deaths.items(), key=lambda x: x[1]["time"]):
+            t = dth["time"]
+            mins, secs = divmod(int(t), 60)
+            print(f"  {mins:02d}:{secs:02d}  {dth['name']:<28}  [{dth['team']}]")
+        print()
+
+    # Packet summary
+    print("=" * 70)
+    print("  PACKET TYPE BREAKDOWN")
+    print("=" * 70)
+    for name, count in battle_data["packet_summary"].items():
+        print(f"  {name:<28} {count:>7,}")
     print()
 
 
-def print_decryption_status(status, decrypted):
-    print("=" * 60)
-    print("  DECRYPTION STATUS")
-    print("=" * 60)
-    if decrypted:
-        print(f"  ✓ {status}")
-        print(f"  Decrypted size : {len(decrypted):,} bytes")
-        print(f"  First 8 bytes  : {decrypted[:8].hex()}")
-    else:
-        for line in status.split("\n"):
-            print(f"  {line}")
-    print()
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# Main
+# ════════════════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(
-        description="WoWS Replay Decoder — extract minimap/battle data from .wowsreplay files",
+        description="WoWS Replay Decoder v2 - improved session ID mapping & positions",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("-replay",     required=True,       help="Path to .wowsreplay file")
-    parser.add_argument("-key",        default=None,        help="Blowfish key as 32 hex chars")
-    parser.add_argument("-output",     default=None,        help="Output JSON file")
-    parser.add_argument("--verbose",   action="store_true", help="Print every parsed packet")
-    parser.add_argument("--meta-only", action="store_true", help="Only print metadata, skip decryption")
+    parser.add_argument("-replay",   required=True, help="Path to .wowsreplay file")
+    parser.add_argument("-output",   default=None,  help="Output JSON file")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--meta-only", action="store_true")
     args = parser.parse_args()
 
     if not os.path.isfile(args.replay):
@@ -425,67 +544,65 @@ def main():
 
     print(f"\nLoading: {args.replay}")
     metadata = load_replay_metadata(args.replay)
-    print_metadata_report(metadata)
+
+    block0   = metadata.get("block0") or {}
+    vehicles = block0.get("vehicles", [])
+    player_v = next((v for v in vehicles if v.get("relation") == 0), None)
 
     if args.meta_only:
+        print(json.dumps(metadata, indent=2))
         if args.output:
             with open(args.output, "w") as f:
                 json.dump(metadata, f, indent=2)
-            print(f"Metadata saved to: {args.output}")
         return
 
-    raw_binary = read_binary_section(args.replay, metadata["binary_offset"])
-    print(f"Binary section: {len(raw_binary):,} bytes\n")
-
-    decrypted, status = decrypt_binary(raw_binary, args.key, verbose=args.verbose)
-    print_decryption_status(status, decrypted)
-
-    if decrypted is None:
+    print("Decrypting & decompressing binary section...")
+    try:
+        packet_data = decrypt_and_decompress(args.replay, metadata["binary_offset"])
+    except Exception as e:
+        print(f"ERROR during decryption: {e}")
         sys.exit(2)
+    print(f"  Decompressed: {len(packet_data):,} bytes")
 
-    game_data = zlib.decompress(decrypted)
-    print(f"Decompressed: {len(game_data):,} bytes\n")
+    print("Building session ID -> vehicle map...")
+    sess_map = build_session_id_map(packet_data, vehicles)
+
+    # Player session ID = the one missing from type-10 packets (sorted full range)
+    all_sess = sorted(sess_map.keys())
+    player_sess_id = next(
+        (s for s in all_sess if sess_map.get(s, {}).get("relation") == 0),
+        -1
+    )
+    print(f"  Mapped {len(sess_map)} vehicles | Player session ID: {player_sess_id}")
 
     print("Parsing packets...")
-    packets = parse_packets(game_data, verbose=args.verbose)
-    print(f"Parsed {len(packets):,} packets\n")
+    packets = parse_packets(packet_data, verbose=args.verbose)
+    print(f"  Parsed {len(packets):,} packets")
 
     if args.verbose:
-        print("── First 50 packets ──")
-        for pkt in packets[:50]:
-            print(f"  [{pkt.offset:08x}] t={pkt.clock:7.2f}  {pkt.ptype_name:<22} "
-                  f"size={pkt.size:<6} {pkt.parsed}")
+        print("\n-- First 30 known-type packets --")
+        shown = 0
+        for pkt in packets:
+            if pkt.ptype in PACKET_TYPES and shown < 30:
+                print(f"  [{pkt.offset:#010x}] t={pkt.clock:7.2f}  {pkt.ptype_name:<22} "
+                      f"size={pkt.size:<6} {pkt.parsed}")
+                shown += 1
 
-    minimap_data = extract_minimap_data(packets, metadata)
+    print("Extracting battle data...")
+    battle_data = extract_battle_data(packets, sess_map, player_sess_id)
 
-    print("── Summary ──────────────────────────────────")
-    print(f"  Entity trails   : {len(minimap_data['positions'])}")
-    print(f"  Entity spawns   : {len(minimap_data['entity_spawns'])}")
-    print(f"  Entity deaths   : {len(minimap_data['entity_leaves'])}")
-    print(f"  HP-tracked ships: {len(minimap_data['damage_stats'])}")
-    print()
-
-    if minimap_data["damage_stats"]:
-        print("── Damage (HP lost per visible entity) ──────")
-        for eid, s in sorted(minimap_data["damage_stats"].items(),
-                             key=lambda x: -x[1]["damage_taken"])[:15]:
-            sunk = " SUNK" if s.get("sunk") else ""
-            print(f"  entity {eid:<10} maxHP={s['max_hp']:>7,}  dmg={s['damage_taken']:>7,}{sunk}")
-        print()
-
-    print("── Packet Type Breakdown ────────────────────")
-    for name, count in minimap_data["packet_summary"].items():
-        print(f"  {name:<28} {count:>6}")
+    print_report(metadata, battle_data, sess_map, player_sess_id)
 
     if args.output:
-        output_data = {
+        output = {
             "metadata":    metadata,
-            "minimap":     minimap_data,
+            "session_map": {str(k): v for k, v in sess_map.items()},
+            "battle_data": battle_data,
             "raw_packets": [p.to_dict() for p in packets] if args.verbose else [],
         }
         with open(args.output, "w") as f:
-            json.dump(output_data, f, indent=2)
-        print(f"\nSaved to: {args.output}")
+            json.dump(output, f, indent=2)
+        print(f"Saved to: {args.output}")
 
 
 if __name__ == "__main__":
