@@ -83,7 +83,7 @@ def main() -> None:
     parser.add_argument("--gif", default=None, help="Also save animated GIF")
     parser.add_argument("--size", type=int, default=1024, help="Canvas size px")
     parser.add_argument("--fps", type=int, default=12, help="GIF fps")
-    parser.add_argument("--speed", type=int, default=6, help="GIF game-seconds per frame")
+    parser.add_argument("--speed", type=int, default=3, help="Game-seconds per frame (lower = slower playback)")
     parser.add_argument("--no-labels", action="store_true")
     parser.add_argument("--no-grid", action="store_true")
     parser.add_argument("--dump-json", default=None, help="Dump extracted JSON")

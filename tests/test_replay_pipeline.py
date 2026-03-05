@@ -48,6 +48,24 @@ class ReplayPipelineTests(unittest.TestCase):
         self.assertGreater(len(data.get("events", {}).get("deaths", [])), 0)
         self.assertGreater(len(data.get("diagnostics", {}).get("packet_counts", {})), 0)
 
+    def test_battle_overlay_fields(self):
+        data = extract_replay(str(SAMPLE))
+        meta = data.get("meta", {}) or {}
+        events = data.get("events", {}) or {}
+        stats = data.get("stats", {}) or {}
+
+        self.assertIsInstance(meta.get("control_points", []), list)
+        self.assertIsInstance(events.get("captures", []), list)
+        self.assertIsInstance(stats.get("team_scores_final", {}), dict)
+        self.assertIn("team_win_score", stats)
+
+        captures = events.get("captures", [])
+        if captures:
+            snap = captures[0]
+            self.assertIn("time_s", snap)
+            self.assertIn("caps", snap)
+            self.assertIn("team_scores", snap)
+
     def test_account_team_alignment(self):
         data = extract_replay(str(SAMPLE))
         meta = data.get("meta", {}) or {}

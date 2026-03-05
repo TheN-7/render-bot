@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import math
 import re
+from bisect import bisect_right
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -31,6 +32,13 @@ SHIP_TYPE_TO_CODE = {
     "AirCarrier": "CV",
     "Submarine": "SS",
 }
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_font(size: int):
@@ -339,6 +347,198 @@ def _marker_name_text(value: Any, max_len: int = 14) -> str:
     if len(s) <= max_len:
         return s
     return s[: max_len - 1] + "~"
+
+
+def _draw_polyline_with_gaps(
+    draw: ImageDraw.ImageDraw,
+    poly: List[Tuple[int, int]],
+    color: Tuple[int, int, int],
+    width: int = 2,
+    max_jump_px: int = 30,
+) -> None:
+    if len(poly) < 2:
+        return
+    max_jump_sq = max_jump_px * max_jump_px
+    start = 0
+    for i in range(1, len(poly)):
+        dx = poly[i][0] - poly[i - 1][0]
+        dy = poly[i][1] - poly[i - 1][1]
+        if dx * dx + dy * dy > max_jump_sq:
+            if i - start >= 2:
+                draw.line(poly[start:i], fill=color, width=width)
+            start = i
+    if len(poly) - start >= 2:
+        draw.line(poly[start:], fill=color, width=width)
+
+
+def _extract_artillery_traces(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    fires = events.get("fires", [])
+    if not isinstance(fires, list):
+        return []
+    traces: List[Dict[str, Any]] = []
+    for fire in fires:
+        if not isinstance(fire, dict):
+            continue
+        if str(fire.get("kind") or "") not in ("", "artillery_trace"):
+            continue
+        t0 = float(fire.get("time_s", 0.0) or 0.0)
+        t1 = float(fire.get("time_end_s", t0) or t0)
+        if t1 < t0:
+            t1 = t0
+        traces.append(
+            {
+                "time_s": t0,
+                "time_end_s": t1,
+                "x0": float(fire.get("x0", 0.0) or 0.0),
+                "z0": float(fire.get("z0", 0.0) or 0.0),
+                "x1": float(fire.get("x1", 0.0) or 0.0),
+                "z1": float(fire.get("z1", 0.0) or 0.0),
+            }
+        )
+    traces.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return traces
+
+
+def _extract_torpedo_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("torpedoes", [])
+    if not isinstance(raw, list):
+        return {}
+
+    tracks: Dict[str, Dict[str, Any]] = {}
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        owner_key = str(row.get("owner_entity_key") or "-1")
+        torpedo_id = _safe_int(row.get("torpedo_id"))
+        torpedo_id = torpedo_id if torpedo_id is not None else -1
+        track_key = f"{owner_key}:{torpedo_id}"
+        track = tracks.setdefault(
+            track_key,
+            {
+                "owner_entity_key": owner_key,
+                "torpedo_id": torpedo_id,
+                "team_side": str(row.get("team_side") or "unknown"),
+                "points": [],
+                "times": [],
+            },
+        )
+        t = float(row.get("time_s", 0.0) or 0.0)
+        x = float(row.get("x", 0.0) or 0.0)
+        z = float(row.get("z", 0.0) or 0.0)
+        track["points"].append({"t": t, "x": x, "z": z})
+
+    for track in tracks.values():
+        points = track.get("points", [])
+        points.sort(key=lambda item: float(item.get("t", 0.0)))
+        deduped: List[Dict[str, float]] = []
+        last = None
+        for p in points:
+            key = (round(float(p.get("t", 0.0)), 3), round(float(p.get("x", 0.0)), 2), round(float(p.get("z", 0.0)), 2))
+            if key == last:
+                continue
+            deduped.append(p)
+            last = key
+        track["points"] = deduped
+        track["times"] = [float(p.get("t", 0.0)) for p in deduped]
+
+    return tracks
+
+
+def _torpedo_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 3.5, max_gap_s: float = 4.0) -> Tuple[float, float] | None:
+    points = track.get("points", [])
+    times = track.get("times", [])
+    if not points or not times:
+        return None
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        return None
+    if idx >= len(points) - 1:
+        if t - float(times[-1]) > max_stale_s:
+            return None
+        return float(points[-1]["x"]), float(points[-1]["z"])
+
+    p0 = points[idx]
+    p1 = points[idx + 1]
+    t0 = float(p0.get("t", 0.0))
+    t1 = float(p1.get("t", t0))
+    if t1 <= t0:
+        return float(p0.get("x", 0.0)), float(p0.get("z", 0.0))
+    if (t1 - t0) > max_gap_s:
+        if (t - t0) > max_stale_s:
+            return None
+        return float(p0.get("x", 0.0)), float(p0.get("z", 0.0))
+
+    ratio = max(0.0, min(1.0, (t - t0) / (t1 - t0)))
+    x = float(p0.get("x", 0.0)) + (float(p1.get("x", 0.0)) - float(p0.get("x", 0.0))) * ratio
+    z = float(p0.get("z", 0.0)) + (float(p1.get("z", 0.0)) - float(p0.get("z", 0.0))) * ratio
+    return x, z
+
+
+def _draw_torpedoes(
+    draw: ImageDraw.ImageDraw,
+    torpedo_tracks: Dict[str, Dict[str, Any]],
+    t: float,
+    half: float,
+    canvas_size: int,
+    margin: int,
+) -> None:
+    for track in torpedo_tracks.values():
+        pos = _torpedo_position_at(track, t)
+        if pos is None:
+            continue
+        x, z = pos
+        px, py = _to_px(x, z, half, canvas_size, margin)
+        side = str(track.get("team_side") or "unknown")
+        if side == "friendly":
+            color = (255, 255, 255)
+        elif side == "enemy":
+            color = (255, 70, 70)
+        else:
+            color = (180, 180, 180)
+        draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=color, outline=(20, 20, 20))
+
+
+def _draw_artillery_traces(
+    img: Image.Image,
+    traces: List[Dict[str, Any]],
+    t: float,
+    half: float,
+    canvas_size: int,
+    margin: int,
+) -> None:
+    if not traces:
+        return
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+    for trace in traces:
+        t0 = float(trace.get("time_s", 0.0))
+        t1 = float(trace.get("time_end_s", t0))
+        if t < t0 or t > t1:
+            continue
+        span = max(0.1, t1 - t0)
+        progress = min(1.0, max(0.0, (t - t0) / span))
+        x0 = float(trace.get("x0", 0.0))
+        z0 = float(trace.get("z0", 0.0))
+        x1 = float(trace.get("x1", 0.0))
+        z1 = float(trace.get("z1", 0.0))
+        xp = x0 + (x1 - x0) * progress
+        zp = z0 + (z1 - z0) * progress
+
+        dx = x1 - x0
+        dz = z1 - z0
+        dist = math.hypot(dx, dz)
+        if dist < 1e-6:
+            continue
+        ux = dx / dist
+        uz = dz / dist
+        seg_world = max(10.0, min(55.0, dist * 0.05))
+        hx = ux * (seg_world * 0.5)
+        hz = uz * (seg_world * 0.5)
+        sx, sy = _to_px(xp - hx, zp - hz, half, canvas_size, margin)
+        ex, ey = _to_px(xp + hx, zp + hz, half, canvas_size, margin)
+        alpha = int(160 + 60 * (1.0 - progress))
+        draw_rgba.line([(sx, sy), (ex, ey)], fill=(245, 245, 245, alpha), width=1)
 
 
 def _normalize_render_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -764,6 +964,305 @@ def _draw_lineup_panel(draw: ImageDraw.ImageDraw, render_tracks: Dict[str, Dict[
             draw.text((right_x + 6, y), _line_text(enemy[i]), fill=(235, 220, 220), font=font)
 
 
+def _capture_timeline(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("captures", [])
+    if not isinstance(raw, list):
+        return []
+    timeline: List[Dict[str, Any]] = []
+    for snap in raw:
+        if not isinstance(snap, dict):
+            continue
+        time_s = float(snap.get("time_s", 0.0) or 0.0)
+        team_scores_raw = snap.get("team_scores", {})
+        team_scores: Dict[int, int] = {}
+        if isinstance(team_scores_raw, dict):
+            for key, value in team_scores_raw.items():
+                team_id = _safe_int(key)
+                score = _safe_int(value)
+                if team_id is None or score is None:
+                    continue
+                team_scores[team_id] = score
+        caps_raw = snap.get("caps", [])
+        caps = caps_raw if isinstance(caps_raw, list) else []
+        timeline.append(
+            {
+                "time_s": time_s,
+                "team_scores": team_scores,
+                "team_win_score": _safe_int(snap.get("team_win_score")) or 0,
+                "caps": caps,
+            }
+        )
+    timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return timeline
+
+
+def _capture_snapshot_at(timeline: List[Dict[str, Any]], t: float) -> Optional[Dict[str, Any]]:
+    if not timeline:
+        return None
+    last = timeline[0]
+    for snap in timeline:
+        if float(snap.get("time_s", 0.0)) <= t + 1e-6:
+            last = snap
+        else:
+            break
+    return last
+
+
+def _resolve_score_team_ids(canonical: Dict[str, Any], team_scores: Dict[int, int]) -> Tuple[Optional[int], Optional[int]]:
+    meta = canonical.get("meta", {}) or {}
+    local_team_id = _safe_int(meta.get("local_team_id"))
+    enemy_team_id = _safe_int(meta.get("enemy_team_id"))
+
+    ids = sorted(team_scores.keys())
+    if local_team_id is None and ids:
+        local_team_id = ids[0]
+    if enemy_team_id is None and local_team_id is not None:
+        enemy_team_id = next((tid for tid in ids if tid != local_team_id), None)
+    if enemy_team_id is None and len(ids) >= 2:
+        enemy_team_id = ids[1]
+    return local_team_id, enemy_team_id
+
+
+def _team_color_for_id(team_id: Optional[int], local_team_id: Optional[int], enemy_team_id: Optional[int]) -> Tuple[int, int, int]:
+    if team_id is None or team_id < 0:
+        return COLOR_UNKNOWN
+    if local_team_id is not None and team_id == local_team_id:
+        return COLOR_FRIENDLY
+    if enemy_team_id is not None and team_id == enemy_team_id:
+        return COLOR_ENEMY
+    return COLOR_UNKNOWN
+
+
+def _draw_score_overlay(draw: ImageDraw.ImageDraw, canonical: Dict[str, Any], snapshot: Optional[Dict[str, Any]], canvas_size: int) -> None:
+    team_scores: Dict[int, int] = {}
+    team_win_score = 0
+
+    if isinstance(snapshot, dict):
+        snap_scores = snapshot.get("team_scores", {})
+        if isinstance(snap_scores, dict):
+            for key, value in snap_scores.items():
+                team_id = _safe_int(key)
+                score = _safe_int(value)
+                if team_id is None or score is None:
+                    continue
+                team_scores[team_id] = score
+        team_win_score = _safe_int(snapshot.get("team_win_score")) or 0
+
+    if not team_scores:
+        stats = canonical.get("stats", {}) or {}
+        raw_final = stats.get("team_scores_final", {})
+        if isinstance(raw_final, dict):
+            for key, value in raw_final.items():
+                team_id = _safe_int(key)
+                score = _safe_int(value)
+                if team_id is None or score is None:
+                    continue
+                team_scores[team_id] = score
+        team_win_score = _safe_int(stats.get("team_win_score")) or team_win_score
+
+    if not team_scores:
+        return
+
+    local_team_id, enemy_team_id = _resolve_score_team_ids(canonical, team_scores)
+    ids = sorted(team_scores.keys())
+    left_id = local_team_id if local_team_id in team_scores else (ids[0] if ids else None)
+    right_id = enemy_team_id if enemy_team_id in team_scores else next((tid for tid in ids if tid != left_id), None)
+    if right_id is None and len(ids) >= 2:
+        right_id = ids[1]
+
+    left_score = team_scores.get(left_id, 0) if left_id is not None else 0
+    right_score = team_scores.get(right_id, 0) if right_id is not None else 0
+
+    font_score = _load_font(max(14, canvas_size // 36))
+    font_sub = _load_font(max(9, canvas_size // 78))
+    left_txt = str(left_score)
+    right_txt = str(right_score)
+    sep_txt = ":"
+    gap = 8
+
+    lbox = draw.textbbox((0, 0), left_txt, font=font_score)
+    sbox = draw.textbbox((0, 0), sep_txt, font=font_score)
+    rbox = draw.textbbox((0, 0), right_txt, font=font_score)
+    lw = lbox[2] - lbox[0]
+    sw = sbox[2] - sbox[0]
+    rw = rbox[2] - rbox[0]
+    total_w = lw + sw + rw + gap * 2
+    x = canvas_size // 2 - total_w // 2
+    y = 8
+
+    left_color = _team_color_for_id(left_id, local_team_id, enemy_team_id)
+    right_color = _team_color_for_id(right_id, local_team_id, enemy_team_id)
+
+    draw.text((x + 1, y + 1), left_txt, fill=(0, 0, 0), font=font_score)
+    draw.text((x, y), left_txt, fill=left_color, font=font_score)
+    x += lw + gap
+    draw.text((x + 1, y + 1), sep_txt, fill=(0, 0, 0), font=font_score)
+    draw.text((x, y), sep_txt, fill=(220, 220, 220), font=font_score)
+    x += sw + gap
+    draw.text((x + 1, y + 1), right_txt, fill=(0, 0, 0), font=font_score)
+    draw.text((x, y), right_txt, fill=right_color, font=font_score)
+
+    if team_win_score > 0:
+        sub = f"target {team_win_score}"
+        bbox = draw.textbbox((0, 0), sub, font=font_sub)
+        tw = bbox[2] - bbox[0]
+        tx = canvas_size // 2 - tw // 2
+        ty = y + (lbox[3] - lbox[1]) + 1
+        draw.text((tx + 1, ty + 1), sub, fill=(0, 0, 0), font=font_sub)
+        draw.text((tx, ty), sub, fill=(200, 200, 200), font=font_sub)
+
+
+def _cap_label(index: Any, fallback_i: int) -> str:
+    idx = _safe_int(index)
+    if idx is None or idx < 0:
+        return str(fallback_i + 1)
+    if idx < 26:
+        return chr(ord("A") + idx)
+    return str(idx + 1)
+
+
+def _draw_capture_overlay(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    canonical: Dict[str, Any],
+    snapshot: Optional[Dict[str, Any]],
+    half: float,
+    canvas_size: int,
+    margin: int,
+) -> None:
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+    meta = canonical.get("meta", {}) or {}
+    control_points = meta.get("control_points", [])
+    if not isinstance(control_points, list):
+        control_points = []
+
+    caps_by_id: Dict[int, Dict[str, Any]] = {}
+    team_scores: Dict[int, int] = {}
+    if isinstance(snapshot, dict):
+        snap_scores = snapshot.get("team_scores", {})
+        if isinstance(snap_scores, dict):
+            for key, value in snap_scores.items():
+                team_id = _safe_int(key)
+                score = _safe_int(value)
+                if team_id is None or score is None:
+                    continue
+                team_scores[team_id] = score
+        for cap in snapshot.get("caps", []):
+            if not isinstance(cap, dict):
+                continue
+            cap_id = _safe_int(cap.get("entity_id"))
+            if cap_id is None:
+                continue
+            caps_by_id[cap_id] = cap
+
+    if not control_points and caps_by_id:
+        control_points = list(caps_by_id.values())
+
+    if not control_points:
+        return
+
+    local_team_id, enemy_team_id = _resolve_score_team_ids(canonical, team_scores)
+    if local_team_id is None:
+        local_team_id = _safe_int(meta.get("local_team_id"))
+    if enemy_team_id is None:
+        enemy_team_id = _safe_int(meta.get("enemy_team_id"))
+
+    font = _load_font(max(10, canvas_size // 70))
+
+    def _as_float(v: Any, default: float = 0.0) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    ordered = sorted(control_points, key=lambda row: (_safe_int(row.get("index")) if _safe_int(row.get("index")) is not None else 999, _safe_int(row.get("entity_id")) or 0))
+    for i, cp in enumerate(ordered):
+        if not isinstance(cp, dict):
+            continue
+        cp_id = _safe_int(cp.get("entity_id"))
+        current = caps_by_id.get(cp_id, cp) if cp_id is not None else cp
+
+        x = _as_float(current.get("x", cp.get("x", 0.0)), 0.0)
+        z = _as_float(current.get("z", cp.get("z", 0.0)), 0.0)
+        px, py = _to_px(x, z, half, canvas_size, margin)
+
+        radius_world = _as_float(current.get("radius", cp.get("radius", 0.0)), 0.0)
+        if radius_world > 0.0:
+            radius_px = max(14, int(radius_world / (2.0 * half) * (canvas_size - 2 * margin)))
+        else:
+            radius_px = max(14, int((canvas_size - 2 * margin) * 0.03))
+
+        cap_team_id = _safe_int(current.get("team_id"))
+        if cap_team_id is None:
+            cap_team_id = _safe_int(cp.get("team_id"))
+        invader_team_id = _safe_int(current.get("invader_team_id"))
+        has_invaders = bool(current.get("has_invaders", False))
+        both_inside = bool(current.get("both_inside", False))
+        progress = max(0.0, min(1.0, _as_float(current.get("progress", 0.0), 0.0)))
+
+        if both_inside:
+            ring_color = (240, 200, 90)
+        elif has_invaders:
+            ring_color = _team_color_for_id(invader_team_id, local_team_id, enemy_team_id)
+        else:
+            # Neutral points must stay gray/white until captured by a team.
+            if cap_team_id is None or cap_team_id < 0:
+                ring_color = (205, 205, 205)
+            else:
+                ring_color = _team_color_for_id(cap_team_id, local_team_id, enemy_team_id)
+
+        if both_inside:
+            fill_alpha = 58
+        elif has_invaders:
+            fill_alpha = 52
+        elif cap_team_id is None or cap_team_id < 0:
+            fill_alpha = 26
+        else:
+            fill_alpha = 42
+        fill_color = (ring_color[0], ring_color[1], ring_color[2], fill_alpha)
+        draw_rgba.ellipse([px - radius_px, py - radius_px, px + radius_px, py + radius_px], fill=fill_color)
+        draw.ellipse([px - radius_px, py - radius_px, px + radius_px, py + radius_px], outline=ring_color, width=2)
+
+        if has_invaders and progress > 0.0:
+            arc_pad = max(2, radius_px // 6)
+            draw.arc(
+                [px - radius_px + arc_pad, py - radius_px + arc_pad, px + radius_px - arc_pad, py + radius_px - arc_pad],
+                start=-90,
+                end=-90 + int(360 * progress),
+                fill=ring_color,
+                width=3,
+            )
+
+        label = _cap_label(current.get("index", cp.get("index")), i)
+        status = ""
+        if both_inside:
+            status = "contested"
+        elif has_invaders:
+            capture_time = _as_float(current.get("capture_time_s", cp.get("capture_time_s", 0.0)), 0.0)
+            capture_speed = _as_float(current.get("capture_speed", 0.0), 0.0)
+            if capture_speed > 1e-4:
+                remaining = max(0.0, (1.0 - progress) / capture_speed)
+            elif capture_time > 0.0:
+                remaining = max(0.0, (1.0 - progress) * capture_time)
+            else:
+                remaining = 0.0
+            if remaining > 0.0:
+                status = f"{int(math.ceil(remaining))}s"
+            elif progress > 0.0:
+                status = f"{int(round(progress * 100))}%"
+
+        text = f"{label} {status}".strip()
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        tx = px - tw // 2
+        ty = py - radius_px - th - 2
+        draw.text((tx + 1, ty + 1), text, fill=(0, 0, 0), font=font)
+        draw.text((tx, ty), text, fill=ring_color, font=font)
+        draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=ring_color, outline=ring_color)
+
+
 def _yaw_to_heading_deg(yaw_value: Any) -> float:
     try:
         yaw = float(yaw_value)
@@ -855,6 +1354,9 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     if battle_end <= 0:
         battle_end = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
     spot_timeout = 10.0
+    capture_timeline = _capture_timeline(canonical)
+    capture_snapshot = _capture_snapshot_at(capture_timeline, battle_end)
+    torpedo_tracks = _extract_torpedo_tracks(canonical)
 
     if show_grid:
         for i in range(9):
@@ -862,6 +1364,8 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             draw.line([(x, margin), (x, canvas_size - margin)], fill=(35, 55, 85), width=1)
             draw.line([(margin, x), (canvas_size - margin, x)], fill=(35, 55, 85), width=1)
         draw.rectangle([margin, margin, canvas_size - margin, canvas_size - margin], outline=(60, 90, 130), width=2)
+    _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin)
+    _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin)
 
     ordered = sorted(render_tracks.items(), key=lambda kv: kv[1].get("team_side", "unknown"))
     friendly_total = sum(1 for _, tr in ordered if tr.get("team_side") == "friendly")
@@ -883,7 +1387,7 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
         poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin) for p in pts]
         if len(poly) >= 2:
             trail_color = tuple(max(0, c // 2) for c in color)
-            draw.line(poly, fill=trail_color, width=2)
+            _draw_polyline_with_gaps(draw, poly[-70:], trail_color, width=2, max_jump_px=34)
 
         sx, sy = poly[0]
         ex, ey = poly[-1]
@@ -920,11 +1424,12 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     draw.text((10, canvas_size - 22), f"duration={duration}s tracked={len(render_tracks)}", fill=(220, 220, 220), font=font)
     draw.text((10, 10), f"friendly {friendly_total} | enemy {enemy_total}", fill=(220, 220, 220), font=font)
     draw.text((10, 28), _map_title(canonical), fill=(220, 220, 220), font=font)
+    _draw_score_overlay(draw, canonical, capture_snapshot, canvas_size)
     _draw_lineup_panel(draw, render_tracks, canvas_size)
     return img
 
 
-def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 6, show_grid: bool = True) -> List[Image.Image]:
+def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 3, show_grid: bool = True) -> List[Image.Image]:
     half = _world_half(canonical)
     margin = 40
     death_times = _find_death_times(canonical)
@@ -933,6 +1438,9 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
     if max_clock <= 0:
         max_clock = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
     spot_timeout = max(6.0, float(speed) * 1.5)
+    capture_timeline = _capture_timeline(canonical)
+    artillery_traces = _extract_artillery_traces(canonical)
+    torpedo_tracks = _extract_torpedo_tracks(canonical)
     heading_memory: Dict[str, float] = {}
     ever_spotted_memory: Dict[str, bool] = {}
 
@@ -953,6 +1461,10 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
                 x = margin + i * (canvas_size - 2 * margin) // 6
                 draw.line([(x, margin), (x, canvas_size - margin)], fill=(35, 55, 85), width=1)
                 draw.line([(margin, x), (canvas_size - margin, x)], fill=(35, 55, 85), width=1)
+        capture_snapshot = _capture_snapshot_at(capture_timeline, t)
+        _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin)
+        _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin)
+        _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin)
 
         for entity_key, track in render_tracks.items():
             all_points = track.get("points", [])
@@ -987,7 +1499,13 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
             color = _status_color(side, spotted=spotted, sunk=sunk, ever_spotted=ever_spotted)
             poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin) for p in points]
             if len(poly) >= 2:
-                draw.line(poly[-20:], fill=tuple(max(0, c // 2) for c in color), width=2)
+                _draw_polyline_with_gaps(
+                    draw,
+                    poly[-24:],
+                    tuple(max(0, c // 2) for c in color),
+                    width=2,
+                    max_jump_px=24,
+                )
             cx, cy = poly[-1]
             bucket = (cx // 14, cy // 14)
             idx = bucket_counts.get(bucket, 0)
@@ -1011,6 +1529,7 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
         draw.text((canvas_size - 80, 10), f"{mins}:{secs:02d}", fill=(220, 220, 220), font=font)
         draw.text((10, 10), f"friendly {friendly_total} | enemy {enemy_total}", fill=(220, 220, 220), font=font)
         draw.text((10, 26), _map_title(canonical), fill=(220, 220, 220), font=font)
+        _draw_score_overlay(draw, canonical, capture_snapshot, canvas_size)
         _draw_lineup_panel(draw, render_tracks, canvas_size)
         frames.append(img)
         t += max(1, speed)
