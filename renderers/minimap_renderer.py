@@ -2164,7 +2164,13 @@ def _draw_player_status_panel(
         _paste_sprite(img, more_sprite, x1 - (more_sprite.width if more_sprite is not None else 0) - 10, y1 - (more_sprite.height if more_sprite is not None else 0) - 6)
 
 
-def _draw_lineup_panel(img: Image.Image, draw: ImageDraw.ImageDraw, layout: Dict[str, Any]) -> None:
+def _draw_lineup_panel(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    layout: Dict[str, Any],
+    current_t: float | None = None,
+    death_times: Dict[str, float] | None = None,
+) -> None:
     friendly = list(layout.get("friendly_items", []))
     enemy = list(layout.get("enemy_items", []))
     line_h = int(layout.get("line_h", 12))
@@ -2186,16 +2192,30 @@ def _draw_lineup_panel(img: Image.Image, draw: ImageDraw.ImageDraw, layout: Dict
         name = _marker_name_text(item.get("player_name"), max_len=max_len)
         return f"{num:>2} {ship_code} {name}"
 
+    def _is_sunk(item: Dict[str, Any]) -> bool:
+        if current_t is None or death_times is None:
+            return False
+        entity_key = str(item.get("entity_id", "") or "")
+        if not entity_key:
+            return False
+        death_t = death_times.get(entity_key)
+        return death_t is not None and float(current_t) >= float(death_t)
+
+    def _draw_row(item: Dict[str, Any], rect: Tuple[Any, Any, Any, Any], x: int, y: int, alive_fill: Tuple[int, int, int]) -> None:
+        sunk = _is_sunk(item)
+        fill = alive_fill if not sunk else (132, 132, 132)
+        row_text = _line_text(item, rect)
+        row_sprite = _text_sprite(row_text, font_size + 1, fill, shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+        _paste_sprite(img, row_sprite, x, y)
+
     rows = max(len(friendly), len(enemy), 12)
     for i in range(rows):
         y_f = int(friendly_rect[1]) + header_h + i * line_h
         y_e = int(enemy_rect[1]) + header_h + i * line_h
         if i < len(friendly):
-            row_sprite = _text_sprite(_line_text(friendly[i], friendly_rect), font_size + 1, (225, 240, 225), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
-            _paste_sprite(img, row_sprite, int(friendly_rect[0]) + 6, y_f)
+            _draw_row(friendly[i], friendly_rect, int(friendly_rect[0]) + 6, y_f, (225, 240, 225))
         if i < len(enemy):
-            row_sprite = _text_sprite(_line_text(enemy[i], enemy_rect), font_size + 1, (240, 225, 225), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
-            _paste_sprite(img, row_sprite, int(enemy_rect[0]) + 6, y_e)
+            _draw_row(enemy[i], enemy_rect, int(enemy_rect[0]) + 6, y_e, (240, 225, 225))
 
 
 def _build_frame_base(
@@ -2233,7 +2253,6 @@ def _build_frame_base(
     title_sprite = _text_sprite(_map_title(canonical), header_font_size, (220, 220, 220))
     _paste_sprite(img, count_sprite, 10, 10)
     _paste_sprite(img, title_sprite, 10, 10 + max(16, header_font_size + 5))
-    _draw_lineup_panel(img, draw, layout)
     return img
 
 
@@ -2732,12 +2751,26 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
     _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, battle_end, layout)
     _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, layout)
+    _draw_lineup_panel(img, draw, layout, current_t=battle_end, death_times=death_times)
     return img
 
 
-def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 3, show_grid: bool = True):
+def estimate_animation_frame_count(canonical: Dict[str, Any], speed: float = 3.0) -> int:
+    step = max(0.05, float(speed))
+    max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
+    if max_clock <= 0:
+        tracks = canonical.get("tracks", {}) or {}
+        max_clock = max(
+            (float(p.get("t", 0.0)) for t in tracks.values() for p in (t.get("points", []) or [])),
+            default=0.0,
+        )
+    return max(1, int(math.floor(max_clock / step)) + 2)
+
+
+def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True):
     half = _world_half(canonical)
     margin = 40
+    step = max(0.05, float(speed))
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
     health_timelines = _extract_health_timelines(canonical)
@@ -2747,7 +2780,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if max_clock <= 0:
         max_clock = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
-    spot_timeout = max(6.0, float(speed) * 1.5)
+    spot_timeout = max(6.0, step * 1.5)
     capture_timeline = _capture_timeline(canonical)
     artillery_traces = _extract_artillery_traces(canonical)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
@@ -2760,7 +2793,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     base_frame = _build_frame_base(canonical, layout, margin, show_grid, ui_font_size)
 
     t = 0.0
-    while t <= max_clock + speed:
+    while t <= max_clock + step:
         img = base_frame.copy()
         draw = ImageDraw.Draw(img)
         bucket_counts: Dict[Tuple[int, int], int] = {}
@@ -2853,9 +2886,10 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
         _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t, layout)
         _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, layout)
+        _draw_lineup_panel(img, draw, layout, current_t=t, death_times=death_times)
         yield img
-        t += max(1, speed)
+        t += step
 
 
-def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 3, show_grid: bool = True) -> List[Image.Image]:
+def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True) -> List[Image.Image]:
     return list(iter_animation_frames(canonical, canvas_size=canvas_size, speed=speed, show_grid=show_grid))

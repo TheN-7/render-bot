@@ -13,13 +13,37 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 from core.minimap_data import load_canonical_data, canonical_to_legacy
-from renderers.minimap_renderer import iter_animation_frames, render_static, render_gif_frames
+from renderers.minimap_renderer import estimate_animation_frame_count, iter_animation_frames, render_static, render_gif_frames
 
 
-def _save_mp4(frames, out_mp4: str, fps: int) -> None:
+ProgressCallback = Callable[[str, int, int], None]
+
+
+def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
+    battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
+    if battle_end > 0:
+        return battle_end
+    tracks = canonical.get("tracks", {}) or {}
+    return max(
+        (float(p.get("t", 0.0)) for t in tracks.values() for p in (t.get("points", []) or [])),
+        default=0.0,
+    )
+
+
+def _resolve_speed(canonical: Dict[str, Any], fps: int, speed: float, target_duration_s: float | None) -> float:
+    if not target_duration_s or target_duration_s <= 0:
+        return max(0.05, float(speed))
+    battle_seconds = _battle_duration_seconds(canonical)
+    if battle_seconds <= 0:
+        return max(0.05, float(speed))
+    target_frames = max(2, int(round(float(target_duration_s) * max(1, int(fps)))))
+    return max(0.05, battle_seconds / float(max(1, target_frames - 1)))
+
+
+def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None = None, total_frames: int | None = None) -> None:
     iterator = iter(frames)
     try:
         first_frame = next(iterator)
@@ -28,6 +52,12 @@ def _save_mp4(frames, out_mp4: str, fps: int) -> None:
 
     frame_size = first_frame.size
     fps = max(1, int(fps))
+    total = max(1, int(total_frames or 0))
+    written = 0
+
+    def _emit(stage: str, current: int, total_count: int) -> None:
+        if progress is not None:
+            progress(stage, int(current), max(1, int(total_count)))
 
     # Preferred path: imageio writer with higher-quality H.264 settings.
     try:
@@ -47,9 +77,14 @@ def _save_mp4(frames, out_mp4: str, fps: int) -> None:
             output_params=["-crf", "18", "-preset", "medium", "-movflags", "+faststart"],
         )
         try:
+            _emit("encoding", 0, total)
             writer.append_data(np.array(first_frame.convert("RGB")))
+            written = 1
+            _emit("encoding", written, total)
             for frame in iterator:
                 writer.append_data(np.array(frame.convert("RGB")))
+                written += 1
+                _emit("encoding", written, total)
         finally:
             writer.close()
         return
@@ -93,10 +128,15 @@ def _save_mp4(frames, out_mp4: str, fps: int) -> None:
         stderr=subprocess.PIPE,
     )
     try:
+        _emit("encoding", 0, total)
         assert process.stdin is not None
         process.stdin.write(first_frame.convert("RGB").tobytes())
+        written = 1
+        _emit("encoding", written, total)
         for frame in iterator:
             process.stdin.write(frame.convert("RGB").tobytes())
+            written += 1
+            _emit("encoding", written, total)
         process.stdin.close()
         _, stderr = process.communicate()
     finally:
@@ -116,16 +156,22 @@ def render_minimap(
     dump_legacy_json: str | None = None,
     size: int = 1024,
     fps: int = 12,
-    speed: int = 3,
+    speed: float = 3.0,
+    target_duration_s: float | None = None,
     show_labels: bool = True,
     show_grid: bool = True,
     bg_color: Tuple[int, int, int] = (10, 20, 40),
+    progress: ProgressCallback | None = None,
 ) -> Dict[str, Any]:
     src = Path(replay_path)
     if not src.is_file():
         raise FileNotFoundError(f"file not found: {replay_path}")
 
+    if progress is not None:
+        progress("loading", 0, 1)
     canonical = load_canonical_data(str(src))
+    if progress is not None:
+        progress("loading", 1, 1)
 
     if dump_json:
         with open(dump_json, "w", encoding="utf-8") as f:
@@ -136,16 +182,22 @@ def render_minimap(
         with open(dump_legacy_json, "w", encoding="utf-8") as f:
             json.dump(legacy, f, indent=2)
 
+    speed = _resolve_speed(canonical, fps, speed, target_duration_s)
     base = os.path.splitext(str(src))[0]
     mp4_path = out_mp4 or (base + "_minimap.mp4")
 
+    total_frames = estimate_animation_frame_count(canonical, speed=speed)
+    if progress is not None:
+        progress("rendering", 0, total_frames)
     mp4_frames = iter_animation_frames(
         canonical,
         canvas_size=size,
         speed=speed,
         show_grid=show_grid,
     )
-    _save_mp4(mp4_frames, mp4_path, fps)
+    _save_mp4(mp4_frames, mp4_path, fps, progress=progress, total_frames=total_frames)
+    if progress is not None:
+        progress("done", total_frames, total_frames)
 
     if out_png:
         img = render_static(
@@ -193,7 +245,7 @@ def main() -> None:
     parser.add_argument("--gif", default=None, help="Also save animated GIF")
     parser.add_argument("--size", type=int, default=1024, help="Canvas size px")
     parser.add_argument("--fps", type=int, default=12, help="GIF fps")
-    parser.add_argument("--speed", type=int, default=3, help="Game-seconds per frame (lower = slower playback)")
+    parser.add_argument("--speed", type=float, default=3.0, help="Game-seconds per frame (lower = slower playback)")
     parser.add_argument("--no-labels", action="store_true")
     parser.add_argument("--no-grid", action="store_true")
     parser.add_argument("--dump-json", default=None, help="Dump extracted JSON")
