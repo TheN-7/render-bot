@@ -3,8 +3,9 @@ from pathlib import Path
 import math
 
 from core.replay_extract import extract_replay
-from core.replay_unpack_adapter import read_replay, decode_packets
+from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
+from renderers.minimap_renderer import _load_space_bin_world_bounds, _overview_half_extent, _world_bounds
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -141,6 +142,40 @@ class ReplayPipelineTests(unittest.TestCase):
                 bad_jumps.append((a.get("t"), b.get("t"), dist))
 
         self.assertEqual([], bad_jumps[:5], msg=f"unexpected local-player jumps: {bad_jumps[:5]}")
+
+    def test_track_sanitizer_keeps_continuity_for_duplicate_timestamps(self):
+        points = [
+            TrackPoint(t=1.0, x=10.0, y=0.0, z=10.0, yaw=0.0),
+            TrackPoint(t=2.0, x=20.0, y=0.0, z=20.0, yaw=0.0),
+            TrackPoint(t=2.0, x=520.0, y=0.0, z=520.0, yaw=0.0),
+            TrackPoint(t=3.0, x=30.0, y=0.0, z=30.0, yaw=0.0),
+        ]
+
+        sanitized = _sanitize_track(points)
+
+        self.assertEqual(3, len(sanitized))
+        self.assertEqual([1.0, 2.0, 3.0], [p.t for p in sanitized])
+        self.assertAlmostEqual(20.0, sanitized[1].x)
+        self.assertAlmostEqual(20.0, sanitized[1].z)
+
+    def test_space_bin_bounds_parse_for_haven(self):
+        bounds = _load_space_bin_world_bounds("50_Gold_harbor")
+        self.assertIsNotNone(bounds)
+        min_x, max_x, min_z, max_z = bounds or (0.0, 0.0, 0.0, 0.0)
+        self.assertAlmostEqual(-835.3986, min_x, places=2)
+        self.assertAlmostEqual(796.2786, max_x, places=2)
+        self.assertAlmostEqual(-835.3986, min_z, places=2)
+        self.assertAlmostEqual(796.2786, max_z, places=2)
+
+    def test_overview_half_extent_for_haven(self):
+        half = _overview_half_extent("50_Gold_harbor")
+        self.assertIsNotNone(half)
+        self.assertAlmostEqual(700.0, half or 0.0, places=3)
+
+    def test_world_bounds_prefer_overview_size(self):
+        data = extract_replay(str(SAMPLE))
+        bounds = _world_bounds(data)
+        self.assertEqual((-700.0, 700.0, -700.0, 700.0), tuple(float(v) for v in bounds))
 
 
 if __name__ == "__main__":

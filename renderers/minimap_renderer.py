@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import re
+import struct
+import xml.etree.ElementTree as ET
 from bisect import bisect_right
 from functools import lru_cache
 from pathlib import Path
@@ -258,6 +260,14 @@ def _map_cache_dir() -> Path:
     return p
 
 
+def _map_assets_root() -> Path:
+    return _root_dir() / "content" / "wg_map_icons"
+
+
+def _overviewmaps_path() -> Path:
+    return _root_dir() / "content" / "overviewmaps.txt"
+
+
 def _ship_preview_cache_dir() -> Path:
     p = _root_dir() / "content" / "wg_ship_previews"
     p.mkdir(parents=True, exist_ok=True)
@@ -304,6 +314,210 @@ def _map_icon_url(canonical: Dict[str, Any]) -> str:
     return ""
 
 
+def _local_map_slug(canonical: Dict[str, Any]) -> str:
+    meta = canonical.get("meta", {}) or {}
+    candidates = [
+        str(meta.get("mapDisplayName") or "").strip(),
+        str(meta.get("mapName") or "").strip(),
+        str(meta.get("map_name_resolved") or "").strip(),
+    ]
+    for value in candidates:
+        if not value:
+            continue
+        token = value.replace("\\", "/").split("/")[-1]
+        if token and (_map_assets_root() / token).is_dir():
+            return token
+    return ""
+
+
+@lru_cache(maxsize=64)
+def _load_local_map_icon(slug: str) -> Image.Image | None:
+    if not slug:
+        return None
+    file_path = _map_assets_root() / slug / "minimap.png"
+    try:
+        if file_path.exists():
+            return Image.open(file_path).convert("RGBA")
+    except Exception:
+        return None
+    return None
+
+
+@lru_cache(maxsize=1)
+def _load_overview_map_sizes() -> Dict[str, float]:
+    path = _overviewmaps_path()
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return {}
+
+    size_by_slug: Dict[str, float] = {}
+    current_size_km: float | None = None
+    size_re = re.compile(r"Size:\s*([0-9]+(?:\.[0-9]+)?)x([0-9]+(?:\.[0-9]+)?)\s*km", re.IGNORECASE)
+    replay_re = re.compile(r"Replay File Name:\s*.+?_([A-Za-z0-9_]+)\.wowsreplay", re.IGNORECASE)
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        size_match = size_re.search(line)
+        if size_match:
+            try:
+                current_size_km = float(size_match.group(1))
+            except ValueError:
+                current_size_km = None
+            continue
+        replay_match = replay_re.search(line)
+        if replay_match and current_size_km is not None:
+            slug = replay_match.group(1).strip()
+            if slug:
+                size_by_slug[slug] = current_size_km
+    return size_by_slug
+
+
+def _overview_half_extent(slug: str) -> float | None:
+    if not slug:
+        return None
+    size_km = _load_overview_map_sizes().get(slug)
+    if size_km is None or size_km <= 0.0:
+        return None
+    # WoWS minimap coordinates map cleanly when one render unit is treated as
+    # roughly 30 meters of overview-map size. Example: 42 km -> 1400 wide.
+    return float(size_km) * 1000.0 / 60.0
+
+
+@lru_cache(maxsize=64)
+def _load_map_world_bounds(slug: str) -> Tuple[float, float, float, float] | None:
+    if not slug:
+        return None
+    settings_path = _map_assets_root() / slug / "space.settings"
+    if not settings_path.exists():
+        return None
+    try:
+        root = ET.fromstring(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    bounds = root.find("bounds")
+    if bounds is None:
+        return None
+
+    def _read_bound(name: str) -> float | None:
+        raw = bounds.attrib.get(name)
+        if raw is not None and str(raw).strip():
+            try:
+                return float(str(raw).strip())
+            except ValueError:
+                return None
+        child = bounds.find(name)
+        if child is not None and (child.text or "").strip():
+            try:
+                return float((child.text or "").strip())
+            except ValueError:
+                return None
+        return None
+
+    try:
+        chunk_node = root.find("chunkSize")
+        chunk_size = float((chunk_node.text or "100").strip()) if chunk_node is not None and (chunk_node.text or "").strip() else 100.0
+    except (TypeError, ValueError):
+        chunk_size = 100.0
+
+    min_chunk_x = _read_bound("minX")
+    max_chunk_x = _read_bound("maxX")
+    min_chunk_z = _read_bound("minY")
+    max_chunk_z = _read_bound("maxY")
+    if None in (min_chunk_x, max_chunk_x, min_chunk_z, max_chunk_z):
+        return None
+
+    min_x = float(min_chunk_x) * chunk_size
+    max_x = (float(max_chunk_x) + 1.0) * chunk_size
+    min_z = float(min_chunk_z) * chunk_size
+    max_z = (float(max_chunk_z) + 1.0) * chunk_size
+    if max_x <= min_x or max_z <= min_z:
+        return None
+    return (min_x, max_x, min_z, max_z)
+
+
+def _unique_sorted(values: List[float], tolerance: float = 0.05) -> List[float]:
+    unique: List[float] = []
+    for value in sorted(float(v) for v in values):
+        if not unique or abs(value - unique[-1]) > tolerance:
+            unique.append(value)
+    return unique
+
+
+@lru_cache(maxsize=64)
+def _load_space_bin_world_bounds(slug: str) -> Tuple[float, float, float, float] | None:
+    if not slug:
+        return None
+
+    space_path = _map_assets_root() / slug / "space.bin"
+    if not space_path.exists():
+        return None
+
+    try:
+        data = space_path.read_bytes()
+    except Exception:
+        return None
+
+    # WoWS map space files store fixed-size records. The first vec4 in each
+    # record is a world-space vertex, and the first record gives a stable
+    # corner/edge seed we can use to recover the coarse map lattice.
+    record_size = 112
+    first_vec4_offset = 144
+    tolerance = 0.05
+
+    records: List[Tuple[float, float, float]] = []
+    for offset in range(first_vec4_offset, len(data) - 16, record_size):
+        try:
+            x, y, z, w = struct.unpack_from("<ffff", data, offset)
+        except struct.error:
+            break
+        if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z) and math.isfinite(w)):
+            continue
+        if abs(w - 1.0) > 1e-4:
+            continue
+        if max(abs(x), abs(y), abs(z)) > 20000.0:
+            continue
+        records.append((x, y, z))
+
+    if not records:
+        return None
+
+    seed_x, seed_y, seed_z = records[0]
+    row_z_values = _unique_sorted(
+        [z for x, y, z in records if abs(x - seed_x) <= tolerance and abs(y - seed_y) <= tolerance],
+        tolerance=tolerance,
+    )
+    col_x_values = _unique_sorted(
+        [x for x, y, z in records if abs(z - seed_z) <= tolerance and abs(y - seed_y) <= tolerance],
+        tolerance=tolerance,
+    )
+
+    if len(row_z_values) < 4 or len(col_x_values) < 4:
+        return None
+
+    min_x = float(col_x_values[0])
+    max_x = float(col_x_values[-1])
+    min_z = float(row_z_values[0])
+    max_z = float(row_z_values[-1])
+    if max_x <= min_x or max_z <= min_z:
+        return None
+
+    settings_bounds = _load_map_world_bounds(slug)
+    if settings_bounds is not None:
+        settings_min_x, settings_max_x, settings_min_z, settings_max_z = settings_bounds
+        settings_span_x = max(1e-6, settings_max_x - settings_min_x)
+        settings_span_z = max(1e-6, settings_max_z - settings_min_z)
+        span_x_ratio = (max_x - min_x) / settings_span_x
+        span_z_ratio = (max_z - min_z) / settings_span_z
+        if not (0.55 <= span_x_ratio <= 1.05 and 0.55 <= span_z_ratio <= 1.05):
+            return None
+
+    return (min_x, max_x, min_z, max_z)
+
+
 @lru_cache(maxsize=32)
 def _load_map_icon(url: str) -> Image.Image | None:
     if not url:
@@ -316,6 +530,137 @@ def _load_map_icon(url: str) -> Image.Image | None:
         return Image.open(file_path).convert("RGBA")
     except Exception:
         return None
+
+
+def _native_map_size(canonical: Dict[str, Any], fallback: int) -> int:
+    local_icon = _load_local_map_icon(_local_map_slug(canonical))
+    if local_icon is not None:
+        return int(local_icon.width)
+    url = _map_icon_url(canonical)
+    icon = _load_map_icon(url) if url else None
+    if icon is None:
+        return int(fallback)
+    return int(icon.width)
+
+
+def _map_margin(canonical: Dict[str, Any], fallback: int = 40) -> int:
+    local_icon = _load_local_map_icon(_local_map_slug(canonical))
+    if local_icon is None:
+        return int(fallback)
+    return 0
+
+
+def _fit_icon_to_square(icon: Image.Image, map_size: int) -> Image.Image:
+    rgba = icon.convert("RGBA")
+    if rgba.size == (map_size, map_size):
+        return rgba
+    if rgba.width == rgba.height:
+        return rgba.resize((map_size, map_size), Image.Resampling.LANCZOS)
+
+    scale = min(map_size / max(1, rgba.width), map_size / max(1, rgba.height))
+    target = (
+        max(1, int(round(rgba.width * scale))),
+        max(1, int(round(rgba.height * scale))),
+    )
+    fitted = rgba.resize(target, Image.Resampling.LANCZOS)
+    square = Image.new("RGBA", (map_size, map_size), (0, 0, 0, 0))
+    ox = (map_size - fitted.width) // 2
+    oy = (map_size - fitted.height) // 2
+    square.paste(fitted, (ox, oy), fitted)
+    return square
+
+
+@lru_cache(maxsize=64)
+def _local_map_background_layer(slug: str, map_size: int) -> Image.Image | None:
+    icon = _load_local_map_icon(slug)
+    if icon is None:
+        return None
+    return _fit_icon_to_square(icon, map_size)
+
+
+def _uniform_playfield_bbox(icon: Image.Image) -> Tuple[int, int, int, int] | None:
+    rgba = icon.convert("RGBA")
+    width, height = rgba.size
+    if width <= 0 or height <= 0:
+        return None
+    px = rgba.load()
+
+    def _uniform_col(x: int) -> bool:
+        first = px[x, 0]
+        for y in range(1, height):
+            if px[x, y] != first:
+                return False
+        return True
+
+    def _uniform_row(y: int) -> bool:
+        first = px[0, y]
+        for x in range(1, width):
+            if px[x, y] != first:
+                return False
+        return True
+
+    left = 0
+    while left < width and _uniform_col(left):
+        left += 1
+    right = width - 1
+    while right >= 0 and _uniform_col(right):
+        right -= 1
+    top = 0
+    while top < height and _uniform_row(top):
+        top += 1
+    bottom = height - 1
+    while bottom >= 0 and _uniform_row(bottom):
+        bottom -= 1
+
+    if left > right or top > bottom:
+        return None
+    return (left, top, right, bottom)
+
+
+@lru_cache(maxsize=64)
+def _map_projection_rect_cached(slug: str, url: str, map_size: int, margin: int) -> Tuple[int, int, int, int]:
+    icon: Image.Image | None = None
+    if url:
+        icon = _load_map_icon(url)
+    if icon is None and slug:
+        icon = _load_local_map_icon(slug)
+    if icon is None:
+        return (margin, margin, map_size - margin - 1, map_size - margin - 1)
+
+    bbox = _uniform_playfield_bbox(icon)
+    if bbox is None:
+        return (margin, margin, map_size - margin - 1, map_size - margin - 1)
+
+    left, top, right, bottom = bbox
+    raw_w = right - left + 1
+    raw_h = bottom - top + 1
+    side = min(raw_w, raw_h)
+    if side < int(min(icon.width, icon.height) * 0.60):
+        return (margin, margin, map_size - margin - 1, map_size - margin - 1)
+
+    left += max(0, (raw_w - side) // 2)
+    top += max(0, (raw_h - side) // 2)
+    right = left + side - 1
+    bottom = top + side - 1
+
+    sx = map_size / max(1, icon.width)
+    sy = map_size / max(1, icon.height)
+    scaled_left = int(round(left * sx))
+    scaled_top = int(round(top * sy))
+    scaled_right = int(round((right + 1) * sx)) - 1
+    scaled_bottom = int(round((bottom + 1) * sy)) - 1
+
+    scaled_left = max(0, min(map_size - 1, scaled_left))
+    scaled_top = max(0, min(map_size - 1, scaled_top))
+    scaled_right = max(scaled_left + 1, min(map_size - 1, scaled_right))
+    scaled_bottom = max(scaled_top + 1, min(map_size - 1, scaled_bottom))
+    return (scaled_left, scaled_top, scaled_right, scaled_bottom)
+
+
+def _map_projection_rect(canonical: Dict[str, Any], map_size: int, margin: int) -> Tuple[int, int, int, int]:
+    if _load_local_map_icon(_local_map_slug(canonical)) is not None:
+        return (margin, margin, map_size - margin - 1, map_size - margin - 1)
+    return _map_projection_rect_cached(_local_map_slug(canonical), _map_icon_url(canonical), int(map_size), int(margin))
 
 
 @lru_cache(maxsize=32)
@@ -359,6 +704,12 @@ def _map_background_layer(url: str, map_size: int, margin: int) -> Image.Image |
 
 
 def _apply_map_background(img: Image.Image, canonical: Dict[str, Any], margin: int, map_size: int, offset_x: int = 0) -> Image.Image:
+    local_layer = _local_map_background_layer(_local_map_slug(canonical), map_size)
+    if local_layer is not None:
+        base = img.convert("RGBA")
+        base.alpha_composite(local_layer, (offset_x, 0))
+        return base.convert("RGB")
+
     url = _map_icon_url(canonical)
     layer = _map_background_layer(url, map_size, margin) if url else None
     if layer is None:
@@ -765,10 +1116,50 @@ def _world_half(canonical: Dict[str, Any]) -> float:
     return max(700.0, math.ceil(padded / 50.0) * 50.0)
 
 
-def _to_px(x: float, z: float, half: float, size: int, margin: int = 40) -> Tuple[int, int]:
-    usable = size - 2 * margin
-    px = int((x + half) / (2 * half) * usable + margin)
-    py = int((1.0 - (z + half) / (2 * half)) * usable + margin)
+def _world_bounds(canonical: Dict[str, Any]) -> Tuple[float, float, float, float]:
+    slug = _local_map_slug(canonical)
+    overview_half = _overview_half_extent(slug)
+    if overview_half is not None:
+        return (-overview_half, overview_half, -overview_half, overview_half)
+    bounds = _load_space_bin_world_bounds(slug)
+    if bounds is not None:
+        return bounds
+    bounds = _load_map_world_bounds(slug)
+    if bounds is not None:
+        return bounds
+    half = _world_half(canonical)
+    return (-half, half, -half, half)
+
+
+def _to_px(
+    x: float,
+    z: float,
+    half: float,
+    size: int,
+    margin: int = 40,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
+) -> Tuple[int, int]:
+    if map_rect is None:
+        left = margin
+        top = margin
+        right = size - margin - 1
+        bottom = size - margin - 1
+    else:
+        left, top, right, bottom = [int(v) for v in map_rect]
+    usable_w = max(1, right - left)
+    usable_h = max(1, bottom - top)
+    if world_bounds is None:
+        min_x = -half
+        max_x = half
+        min_z = -half
+        max_z = half
+    else:
+        min_x, max_x, min_z, max_z = [float(v) for v in world_bounds]
+    span_x = max(1e-6, max_x - min_x)
+    span_z = max(1e-6, max_z - min_z)
+    px = int((x - min_x) / span_x * usable_w + left)
+    py = int((1.0 - (z - min_z) / span_z) * usable_h + top)
     return px, py
 
 
@@ -1392,13 +1783,15 @@ def _draw_torpedoes(
     half: float,
     canvas_size: int,
     margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
 ) -> None:
     for track in torpedo_tracks.values():
         pos = _torpedo_position_at(track, t)
         if pos is None:
             continue
         x, z = pos
-        px, py = _to_px(x, z, half, canvas_size, margin)
+        px, py = _to_px(x, z, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         direction = _torpedo_direction_at(track, t)
         side = str(track.get("team_side") or "unknown")
         if side == "friendly":
@@ -1414,11 +1807,11 @@ def _draw_torpedoes(
             continue
 
         dx, dz = direction
-        front = _to_px(x + dx * 10.0, z + dz * 10.0, half, canvas_size, margin)
-        back = _to_px(x - dx * 8.0, z - dz * 8.0, half, canvas_size, margin)
-        left = _to_px(x - dz * 5.0, z + dx * 5.0, half, canvas_size, margin)
-        right = _to_px(x + dz * 5.0, z - dx * 5.0, half, canvas_size, margin)
-        wake = _to_px(x - dx * 18.0, z - dz * 18.0, half, canvas_size, margin)
+        front = _to_px(x + dx * 10.0, z + dz * 10.0, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        back = _to_px(x - dx * 8.0, z - dz * 8.0, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        left = _to_px(x - dz * 5.0, z + dx * 5.0, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        right = _to_px(x + dz * 5.0, z - dx * 5.0, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        wake = _to_px(x - dx * 18.0, z - dz * 18.0, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         draw.line([wake, back], fill=color, width=1)
         draw.polygon([front, right, back, left], fill=color, outline=(20, 20, 20))
 
@@ -1430,6 +1823,8 @@ def _draw_artillery_traces(
     half: float,
     canvas_size: int,
     margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
 ) -> None:
     if not traces:
         return
@@ -1458,8 +1853,8 @@ def _draw_artillery_traces(
         seg_world = max(10.0, min(55.0, dist * 0.05))
         hx = ux * (seg_world * 0.5)
         hz = uz * (seg_world * 0.5)
-        sx, sy = _to_px(xp - hx, zp - hz, half, canvas_size, margin)
-        ex, ey = _to_px(xp + hx, zp + hz, half, canvas_size, margin)
+        sx, sy = _to_px(xp - hx, zp - hz, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        ex, ey = _to_px(xp + hx, zp + hz, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         alpha = int(160 + 60 * (1.0 - progress))
         shell_kind = str(trace.get("shell_kind") or "").strip().lower()
         if shell_kind == "he":
@@ -2271,6 +2666,7 @@ def _build_frame_base(
     show_grid: bool,
     header_font_size: int,
     bg_color: Tuple[int, int, int] = COLOR_BG,
+    map_rect: Tuple[int, int, int, int] | None = None,
 ) -> Image.Image:
     map_size = int(layout.get("map_size", 600))
     canvas_w = int(layout.get("width", map_size))
@@ -2284,14 +2680,22 @@ def _build_frame_base(
     draw = ImageDraw.Draw(img)
 
     if show_grid:
+        if map_rect is None:
+            left = margin
+            top = margin
+            right = map_size - margin - 1
+            bottom = map_size - margin - 1
+        else:
+            left, top, right, bottom = [int(v) for v in map_rect]
         grid_steps = 11
         grid_divisor = max(1, grid_steps - 1)
         for i in range(grid_steps):
-            x = margin + i * (map_size - 2 * margin) // grid_divisor
-            draw.line([(x, margin), (x, map_size - margin)], fill=(35, 55, 85), width=1)
-            draw.line([(margin, x), (map_size - margin, x)], fill=(35, 55, 85), width=1)
+            x = left + i * (right - left) // grid_divisor
+            y = top + i * (bottom - top) // grid_divisor
+            draw.line([(x, top), (x, bottom)], fill=(35, 55, 85), width=1)
+            draw.line([(left, y), (right, y)], fill=(35, 55, 85), width=1)
         if map_size >= 800:
-            draw.rectangle([margin, margin, map_size - margin, map_size - margin], outline=(60, 90, 130), width=2)
+            draw.rectangle([left, top, right, bottom], outline=(60, 90, 130), width=2)
 
     friendly_total = len(layout.get("friendly_items", []))
     enemy_total = len(layout.get("enemy_items", []))
@@ -2307,6 +2711,8 @@ def _prepare_track_render_data(
     half: float,
     canvas_size: int,
     margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
 ) -> Dict[str, Dict[str, Any]]:
     prepared: Dict[str, Dict[str, Any]] = {}
     for entity_key, track in render_tracks.items():
@@ -2315,7 +2721,15 @@ def _prepare_track_render_data(
             continue
         times = [float(p.get("t", 0.0)) for p in points]
         pixels = [
-            _to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin)
+            _to_px(
+                float(p.get("x", 0.0)),
+                float(p.get("z", 0.0)),
+                half,
+                canvas_size,
+                margin,
+                world_bounds=world_bounds,
+                map_rect=map_rect,
+            )
             for p in points
         ]
         prepared[str(entity_key)] = {
@@ -2494,6 +2908,8 @@ def _draw_capture_overlay(
     half: float,
     canvas_size: int,
     margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
 ) -> None:
     draw_rgba = ImageDraw.Draw(img, "RGBA")
     meta = canonical.get("meta", {}) or {}
@@ -2549,13 +2965,21 @@ def _draw_capture_overlay(
 
         x = _as_float(current.get("x", cp.get("x", 0.0)), 0.0)
         z = _as_float(current.get("z", cp.get("z", 0.0)), 0.0)
-        px, py = _to_px(x, z, half, canvas_size, margin)
+        px, py = _to_px(x, z, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
 
         radius_world = _as_float(current.get("radius", cp.get("radius", 0.0)), 0.0)
-        if radius_world > 0.0:
-            radius_px = max(12, int(radius_world / (2.0 * half) * (canvas_size - 2 * margin) * 0.92))
+        if world_bounds is None:
+            world_span = 2.0 * half
         else:
-            radius_px = max(14, int((canvas_size - 2 * margin) * 0.03))
+            world_span = max(float(world_bounds[1]) - float(world_bounds[0]), float(world_bounds[3]) - float(world_bounds[2]))
+        if map_rect is None:
+            usable_span = canvas_size - 2 * margin
+        else:
+            usable_span = min(int(map_rect[2]) - int(map_rect[0]), int(map_rect[3]) - int(map_rect[1]))
+        if radius_world > 0.0:
+            radius_px = max(12, int(radius_world / max(1e-6, world_span) * usable_span * 0.92))
+        else:
+            radius_px = max(14, int(usable_span * 0.03))
 
         cap_team_id = _safe_int(current.get("team_id"))
         if cap_team_id is None:
@@ -2715,14 +3139,17 @@ def _clamp_track_to_time(points: List[Dict[str, Any]], t_limit: float) -> List[D
 
 def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_labels: bool = True, show_grid: bool = True, bg_color: Tuple[int, int, int] = COLOR_BG) -> Image.Image:
     font = _load_font(12)
+    canvas_size = _native_map_size(canonical, canvas_size)
     half = _world_half(canonical)
-    margin = 40
+    world_bounds = _world_bounds(canonical)
+    margin = _map_margin(canonical)
+    map_rect = _map_projection_rect(canonical, canvas_size, margin)
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
     health_timelines = _extract_health_timelines(canonical)
     player_status_timeline = _extract_player_status_timeline(canonical)
     layout = _render_layout(render_tracks, canvas_size)
-    img = _build_frame_base(canonical, layout, margin, show_grid, 12, bg_color=bg_color)
+    img = _build_frame_base(canonical, layout, margin, show_grid, 12, bg_color=bg_color, map_rect=map_rect)
     draw = ImageDraw.Draw(img)
     battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if battle_end <= 0:
@@ -2733,11 +3160,10 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     torpedo_tracks = _extract_torpedo_tracks(canonical)
     kill_feed = _extract_kill_feed(canonical)
 
-    _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin)
-    _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin)
+    _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+    _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
 
     ordered = sorted(render_tracks.items(), key=lambda kv: kv[1].get("team_side", "unknown"))
-    bucket_counts: Dict[Tuple[int, int], int] = {}
     for entity_key, track in ordered:
         pts = list(track.get("points", []) or [])
         if not pts:
@@ -2752,17 +3178,13 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
         spotted = (battle_end - last_t) <= spot_timeout and not bool(track.get("always_unspotted", False))
         ever_spotted = (not bool(track.get("always_unspotted", False))) and bool(render_pts)
         color = _status_color(_color_side(track), spotted=spotted, sunk=sunk, ever_spotted=ever_spotted)
-        poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin) for p in render_pts]
+        poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect) for p in render_pts]
         if len(poly) >= 2:
             trail_color = tuple(max(0, c // 2) for c in color)
             _draw_polyline_with_gaps(draw, poly[-70:], trail_color, width=2, max_jump_px=34)
 
         sx, sy = poly[0]
         ex, ey = poly[-1]
-        bucket = (ex // 16, ey // 16)
-        idx = bucket_counts.get(bucket, 0)
-        bucket_counts[bucket] = idx + 1
-        ex, ey = _spread_marker_position(ex, ey, idx, cell=16)
         draw.ellipse([sx - 3, sy - 3, sx + 3, sy + 3], fill=tuple(max(0, c // 2) for c in color), outline=color)
         _draw_ship_marker(
             img,
@@ -2814,15 +3236,18 @@ def estimate_animation_frame_count(canonical: Dict[str, Any], speed: float = 3.0
 
 
 def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True):
+    canvas_size = _native_map_size(canonical, canvas_size)
     half = _world_half(canonical)
-    margin = 40
+    world_bounds = _world_bounds(canonical)
+    margin = _map_margin(canonical)
+    map_rect = _map_projection_rect(canonical, canvas_size, margin)
     step = max(0.05, float(speed))
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
     health_timelines = _extract_health_timelines(canonical)
     player_status_timeline = _extract_player_status_timeline(canonical)
     layout = _render_layout(render_tracks, canvas_size)
-    prepared_tracks = _prepare_track_render_data(render_tracks, half, canvas_size, margin)
+    prepared_tracks = _prepare_track_render_data(render_tracks, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if max_clock <= 0:
         max_clock = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
@@ -2836,17 +3261,16 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     ui_font_size = max(11, canvas_size // 56)
     marker_size = max(6, canvas_size // 96)
     clock_x = canvas_size - max(80, ui_font_size * 7)
-    base_frame = _build_frame_base(canonical, layout, margin, show_grid, ui_font_size)
+    base_frame = _build_frame_base(canonical, layout, margin, show_grid, ui_font_size, map_rect=map_rect)
 
     t = 0.0
     while t <= max_clock + step:
         img = base_frame.copy()
         draw = ImageDraw.Draw(img)
-        bucket_counts: Dict[Tuple[int, int], int] = {}
         capture_snapshot = _capture_snapshot_at(capture_timeline, t)
-        _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin)
-        _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin)
-        _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin)
+        _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
 
         for entity_key, prepared in prepared_tracks.items():
             track = prepared["track"]
@@ -2897,10 +3321,6 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                     max_jump_px=24,
                 )
             cx, cy = poly[-1]
-            bucket = (cx // 14, cy // 14)
-            idx = bucket_counts.get(bucket, 0)
-            bucket_counts[bucket] = idx + 1
-            cx, cy = _spread_marker_position(cx, cy, idx, cell=14)
             _draw_ship_marker(
                 img,
                 draw,

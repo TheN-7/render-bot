@@ -1202,7 +1202,7 @@ def _build_session_map(context: ReplayContext, packets: List[DecodedPacket]) -> 
     return _build_session_map_heuristic(context.engine_data, packets), "heuristic"
 
 
-def _sanitize_player_track(points: List[TrackPoint]) -> List[TrackPoint]:
+def _sanitize_track(points: List[TrackPoint]) -> List[TrackPoint]:
     if not points:
         return points
 
@@ -1323,10 +1323,9 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
             if int(p.packet_obj.messageId) == 0:
                 deaths.append(DeathEvent(entity_id=int(p.packet_obj.entityId), t=round(float(p.time), 3)))
 
-    for track in tracks.values():
+    for eid, track in tracks.items():
         track.points.sort(key=lambda item: item.t)
-    if player_session_id is not None and player_session_id in tracks:
-        tracks[player_session_id].points = _sanitize_player_track(tracks[player_session_id].points)
+        track.points = _sanitize_track(track.points)
 
     battle_state = _extract_battle_overlay(context, packets, local_team_id)
     diagnostics = {
