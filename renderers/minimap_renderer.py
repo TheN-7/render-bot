@@ -328,14 +328,33 @@ def _map_background_layer(url: str, map_size: int, margin: int) -> Image.Image |
     if usable <= 0:
         return None
 
-    bg = icon.resize((usable, usable), Image.Resampling.LANCZOS)
+    # WG minimap assets can include transparent padding. Crop to the visible map
+    # area first so the island layout stays centered against the replay coordinates.
+    alpha = icon.getchannel("A")
+    bbox = alpha.getbbox()
+    if bbox is not None:
+        cropped = icon.crop(bbox)
+    else:
+        cropped = icon
+
+    side = max(cropped.width, cropped.height)
+    square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    ox = (side - cropped.width) // 2
+    oy = (side - cropped.height) // 2
+    square.paste(cropped, (ox, oy), cropped)
+
+    # Keep a small inset after cropping so the visible map art does not end up
+    # slightly oversized relative to the replay coordinate plane.
+    scaled_usable = max(1, int(round(usable * 0.97)))
+    bg = square.resize((scaled_usable, scaled_usable), Image.Resampling.LANCZOS)
     # Keep map readable but subtle so tracks/icons stay visible.
     bg = ImageEnhance.Brightness(bg).enhance(0.75)
-    alpha = bg.getchannel("A").point(lambda a: min(165, a))
-    bg.putalpha(alpha)
+    bg_alpha = bg.getchannel("A").point(lambda a: min(185, a))
+    bg.putalpha(bg_alpha)
 
     layer = Image.new("RGBA", (map_size, map_size), (0, 0, 0, 0))
-    layer.paste(bg, (margin, margin), bg)
+    inset = (usable - scaled_usable) // 2
+    layer.paste(bg, (margin + inset, margin + inset), bg)
     return layer
 
 
@@ -710,13 +729,40 @@ def _load_ribbon_icon(ribbon_id: int, size: int) -> Image.Image | None:
 
 
 def _world_half(canonical: Dict[str, Any]) -> float:
+    meta = canonical.get("meta", {}) or {}
+    for key in ("world_half", "map_half", "map_extent_half"):
+        try:
+            value = float(meta.get(key, 0.0) or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0.0:
+            return value
+
     max_extent = 0.0
     for track in canonical.get("tracks", {}).values():
         for p in track.get("points", []):
             max_extent = max(max_extent, abs(float(p.get("x", 0.0))), abs(float(p.get("z", 0.0))))
+
+    control_points = meta.get("control_points", []) or []
+    if isinstance(control_points, list):
+        for cp in control_points:
+            if not isinstance(cp, dict):
+                continue
+            try:
+                x = abs(float(cp.get("x", 0.0) or 0.0))
+                z = abs(float(cp.get("z", 0.0) or 0.0))
+                r = max(0.0, float(cp.get("radius", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                continue
+            max_extent = max(max_extent, x + r, z + r)
+
     if max_extent <= 0.0:
         return 700.0
-    return math.ceil(max_extent * 1.1 / 50.0) * 50.0
+
+    # Track-only bounds underfit maps where ships never reach the edge.
+    # Include cap extents, but keep the padding modest so movement does not look compressed.
+    padded = max_extent * 1.10
+    return max(700.0, math.ceil(padded / 50.0) * 50.0)
 
 
 def _to_px(x: float, z: float, half: float, size: int, margin: int = 40) -> Tuple[int, int]:
@@ -2238,7 +2284,7 @@ def _build_frame_base(
     draw = ImageDraw.Draw(img)
 
     if show_grid:
-        grid_steps = 9 if map_size >= 800 else 7
+        grid_steps = 11
         grid_divisor = max(1, grid_steps - 1)
         for i in range(grid_steps):
             x = margin + i * (map_size - 2 * margin) // grid_divisor
@@ -2507,7 +2553,7 @@ def _draw_capture_overlay(
 
         radius_world = _as_float(current.get("radius", cp.get("radius", 0.0)), 0.0)
         if radius_world > 0.0:
-            radius_px = max(14, int(radius_world / (2.0 * half) * (canvas_size - 2 * margin)))
+            radius_px = max(12, int(radius_world / (2.0 * half) * (canvas_size - 2 * margin) * 0.92))
         else:
             radius_px = max(14, int((canvas_size - 2 * margin) * 0.03))
 
