@@ -5,6 +5,7 @@ twine
 pycryptodome
 pycryptodomex
 packaging
+lxml
 Pillow
 numpy
 imageio

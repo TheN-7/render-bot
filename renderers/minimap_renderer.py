@@ -41,11 +41,44 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+@lru_cache(maxsize=32)
 def _load_font(size: int):
     try:
         return ImageFont.truetype("arial.ttf", size)
     except Exception:
         return ImageFont.load_default()
+
+
+@lru_cache(maxsize=2048)
+def _text_sprite(
+    text: str,
+    size: int,
+    fill: Tuple[int, int, int],
+    shadow: Tuple[int, int, int] | None = None,
+) -> Image.Image | None:
+    if not text:
+        return None
+    font = _load_font(size)
+    probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    probe_draw = ImageDraw.Draw(probe)
+    bbox = probe_draw.textbbox((0, 0), text, font=font)
+    shadow_pad = 1 if shadow is not None else 0
+    width = max(1, (bbox[2] - bbox[0]) + shadow_pad + 1)
+    height = max(1, (bbox[3] - bbox[1]) + shadow_pad + 1)
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    ox = -bbox[0]
+    oy = -bbox[1]
+    if shadow is not None:
+        draw.text((ox + 1, oy + 1), text, fill=shadow, font=font)
+    draw.text((ox, oy), text, fill=fill, font=font)
+    return img
+
+
+def _paste_sprite(img: Image.Image, sprite: Image.Image | None, x: int, y: int) -> None:
+    if sprite is None:
+        return
+    img.paste(sprite, (x, y), sprite)
 
 
 @lru_cache(maxsize=1)
@@ -86,6 +119,12 @@ def _root_dir() -> Path:
 
 def _icon_cache_dir() -> Path:
     p = _root_dir() / "content" / "wg_ship_type_icons"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _kill_icon_cache_dir() -> Path:
+    p = _root_dir() / "content" / "sessionstats_kill_icons"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -227,6 +266,7 @@ def _load_wg_class_icons() -> Dict[str, Image.Image]:
     return icons
 
 
+@lru_cache(maxsize=128)
 def _wg_tinted_icon(ship_type: str, color: Tuple[int, int, int], size: int) -> Image.Image | None:
     base_icon = _load_wg_class_icons().get(ship_type)
     if base_icon is None:
@@ -390,6 +430,8 @@ def _extract_artillery_traces(canonical: Dict[str, Any]) -> List[Dict[str, Any]]
             {
                 "time_s": t0,
                 "time_end_s": t1,
+                "params_id": _safe_int(fire.get("params_id")) or -1,
+                "shell_kind": str(fire.get("shell_kind") or "").strip().lower(),
                 "x0": float(fire.get("x0", 0.0) or 0.0),
                 "z0": float(fire.get("z0", 0.0) or 0.0),
                 "x1": float(fire.get("x1", 0.0) or 0.0),
@@ -398,6 +440,30 @@ def _extract_artillery_traces(canonical: Dict[str, Any]) -> List[Dict[str, Any]]
         )
     traces.sort(key=lambda item: float(item.get("time_s", 0.0)))
     return traces
+
+
+def _extract_kill_feed(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("kills", [])
+    if not isinstance(raw, list):
+        return []
+    kills: List[Dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        kills.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "killer_entity_key": str(row.get("killer_entity_key") or "-1"),
+                "victim_entity_key": str(row.get("victim_entity_key") or "-1"),
+                "reason_code": _safe_int(row.get("reason_code")) or -1,
+                "weapon_kind": str(row.get("weapon_kind") or "other"),
+                "weapon_label": str(row.get("weapon_label") or "KILL"),
+                "shell_kind": str(row.get("shell_kind") or "").strip().lower(),
+            }
+        )
+    kills.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return kills
 
 
 def _extract_torpedo_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -476,6 +542,26 @@ def _torpedo_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 3
     return x, z
 
 
+def _torpedo_direction_at(track: Dict[str, Any], t: float) -> Tuple[float, float] | None:
+    points = track.get("points", [])
+    times = track.get("times", [])
+    if len(points) < 2 or not times:
+        return None
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        return None
+    if idx >= len(points) - 1:
+        idx = len(points) - 2
+    p0 = points[idx]
+    p1 = points[idx + 1]
+    dx = float(p1.get("x", 0.0)) - float(p0.get("x", 0.0))
+    dz = float(p1.get("z", 0.0)) - float(p0.get("z", 0.0))
+    dist = math.hypot(dx, dz)
+    if dist < 1e-6:
+        return None
+    return dx / dist, dz / dist
+
+
 def _draw_torpedoes(
     draw: ImageDraw.ImageDraw,
     torpedo_tracks: Dict[str, Dict[str, Any]],
@@ -490,6 +576,7 @@ def _draw_torpedoes(
             continue
         x, z = pos
         px, py = _to_px(x, z, half, canvas_size, margin)
+        direction = _torpedo_direction_at(track, t)
         side = str(track.get("team_side") or "unknown")
         if side == "friendly":
             color = (255, 255, 255)
@@ -497,7 +584,20 @@ def _draw_torpedoes(
             color = (255, 70, 70)
         else:
             color = (180, 180, 180)
-        draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=color, outline=(20, 20, 20))
+
+        if direction is None:
+            points = [(px, py - 4), (px + 4, py), (px, py + 4), (px - 4, py)]
+            draw.polygon(points, fill=color, outline=(20, 20, 20))
+            continue
+
+        dx, dz = direction
+        front = _to_px(x + dx * 10.0, z + dz * 10.0, half, canvas_size, margin)
+        back = _to_px(x - dx * 8.0, z - dz * 8.0, half, canvas_size, margin)
+        left = _to_px(x - dz * 5.0, z + dx * 5.0, half, canvas_size, margin)
+        right = _to_px(x + dz * 5.0, z - dx * 5.0, half, canvas_size, margin)
+        wake = _to_px(x - dx * 18.0, z - dz * 18.0, half, canvas_size, margin)
+        draw.line([wake, back], fill=color, width=1)
+        draw.polygon([front, right, back, left], fill=color, outline=(20, 20, 20))
 
 
 def _draw_artillery_traces(
@@ -538,7 +638,152 @@ def _draw_artillery_traces(
         sx, sy = _to_px(xp - hx, zp - hz, half, canvas_size, margin)
         ex, ey = _to_px(xp + hx, zp + hz, half, canvas_size, margin)
         alpha = int(160 + 60 * (1.0 - progress))
-        draw_rgba.line([(sx, sy), (ex, ey)], fill=(245, 245, 245, alpha), width=1)
+        shell_kind = str(trace.get("shell_kind") or "").strip().lower()
+        if shell_kind == "he":
+            color = (255, 238, 170, alpha)
+        elif shell_kind == "cs":
+            color = (255, 224, 160, alpha)
+        else:
+            color = (245, 245, 245, alpha)
+        draw_rgba.line([(sx, sy), (ex, ey)], fill=color, width=1)
+
+
+def _entity_name_for_feed(canonical: Dict[str, Any], entity_key: str) -> str:
+    key = str(entity_key or "-1")
+    if key in ("", "-1"):
+        return "Environment"
+    entities = canonical.get("entities", {}) or {}
+    entity = entities.get(key, {}) if isinstance(entities, dict) else {}
+    name = str(entity.get("player_name") or "").strip()
+    if name:
+        return name
+    return f"entity_{key}"
+
+
+def _kill_panel_style(entry: Dict[str, Any]) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
+    shell_kind = str(entry.get("shell_kind") or "").strip().lower()
+    weapon_kind = str(entry.get("weapon_kind") or "other")
+    if shell_kind == "ap":
+        return (245, 245, 245), (20, 20, 20)
+    if shell_kind == "he":
+        return (255, 238, 170), (30, 30, 30)
+    if shell_kind == "cs":
+        return (255, 224, 160), (40, 35, 20)
+    if weapon_kind == "torpedo":
+        return (255, 84, 84), (255, 255, 255)
+    if weapon_kind == "bomb":
+        return (255, 185, 120), (30, 30, 30)
+    return (150, 150, 150), (255, 255, 255)
+
+
+def _kill_icon_filename(entry: Dict[str, Any]) -> str:
+    reason_code = _safe_int(entry.get("reason_code"))
+    if reason_code in (1, 16, 17, 18, 19):
+        return "icon_main.png"
+    if reason_code == 2:
+        return "icon_atba.png"
+    if reason_code in (3, 5, 11, 13):
+        return "icon_torpedo.png"
+    if reason_code in (4, 28):
+        return "icon_bomb.png"
+    if reason_code == 6:
+        return "icon_burn.png"
+    if reason_code == 9:
+        return "icon_flood.png"
+    if reason_code == 14:
+        return "icon_rocket.png"
+    if reason_code == 22:
+        return "icon_skip.png"
+
+    weapon_kind = str(entry.get("weapon_kind") or "other")
+    if weapon_kind == "gun":
+        return "icon_main.png"
+    if weapon_kind == "torpedo":
+        return "icon_torpedo.png"
+    if weapon_kind == "bomb":
+        return "icon_bomb.png"
+    return "icon_kill.png"
+
+
+@lru_cache(maxsize=64)
+def _load_kill_icon(filename: str, size: int) -> Image.Image | None:
+    file_path = _kill_icon_cache_dir() / filename
+    if not file_path.exists():
+        return None
+    try:
+        icon = Image.open(file_path).convert("RGBA")
+    except Exception:
+        return None
+    if size > 0 and icon.size != (size, size):
+        icon = icon.resize((size, size), Image.Resampling.LANCZOS)
+    return icon
+
+
+def _draw_kill_feed_panel(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    canonical: Dict[str, Any],
+    render_tracks: Dict[str, Dict[str, Any]],
+    kill_feed: List[Dict[str, Any]],
+    t: float,
+    canvas_size: int,
+) -> None:
+    visible = [row for row in kill_feed if float(row.get("time_s", 0.0)) <= t + 1e-6]
+    if not visible:
+        return
+
+    font_size = 10
+    time_font_size = 9
+    icon_size = max(14, canvas_size // 42)
+    line_h = max(16, icon_size + 2)
+    col_w = max(220, canvas_size // 3)
+    rows = max(
+        sum(1 for v in render_tracks.values() if v.get("team_side") == "friendly"),
+        sum(1 for v in render_tracks.values() if v.get("team_side") == "enemy"),
+        12,
+    )
+    lineup_panel_h = 20 + rows * 12 + 8
+    panel_x = canvas_size - col_w - 8
+    panel_y = 48 + lineup_panel_h + 10
+    available_rows = max(4, min(10, (canvas_size - panel_y - 20) // line_h))
+    visible = visible[-available_rows:]
+    panel_h = 20 + len(visible) * line_h + 8
+
+    draw.rectangle([panel_x, panel_y, panel_x + col_w, panel_y + panel_h], fill=None, outline=(100, 100, 100))
+    _paste_sprite(img, _text_sprite("Kill feed", font_size, (225, 225, 225)), panel_x + 6, panel_y + 4)
+
+    y = panel_y + 20
+    for entry in reversed(visible):
+        killer = _entity_name_for_feed(canonical, str(entry.get("killer_entity_key") or "-1"))
+        victim = _entity_name_for_feed(canonical, str(entry.get("victim_entity_key") or "-1"))
+        killer = _marker_name_text(killer, max_len=13)
+        victim = _marker_name_text(victim, max_len=13)
+        weapon_label = str(entry.get("weapon_label") or "KILL")
+        pill_fill, pill_text = _kill_panel_style(entry)
+
+        mins, secs = divmod(int(float(entry.get("time_s", 0.0))), 60)
+        stamp = f"{mins}:{secs:02d}"
+        stamp_sprite = _text_sprite(stamp, time_font_size, (165, 165, 165))
+        _paste_sprite(img, stamp_sprite, panel_x + 6, y + 1)
+
+        tx = panel_x + 42
+        killer_sprite = _text_sprite(killer, font_size, (235, 235, 235))
+        _paste_sprite(img, killer_sprite, tx, y)
+        icon_x = tx + (killer_sprite.width if killer_sprite is not None else 0) + 6
+        icon_y = y - 1
+        icon = _load_kill_icon(_kill_icon_filename(entry), icon_size)
+        if icon is not None:
+            img.paste(icon, (icon_x, icon_y), icon)
+            victim_x = icon_x + icon_size + 6
+        else:
+            pill_sprite = _text_sprite(weapon_label, time_font_size, pill_text)
+            pill_w = (pill_sprite.width if pill_sprite is not None else 0) + 8
+            draw.rectangle([icon_x, y, icon_x + pill_w, y + 11], fill=pill_fill, outline=(20, 20, 20))
+            _paste_sprite(img, pill_sprite, icon_x + 4, y + 1)
+            victim_x = icon_x + pill_w + 6
+        victim_sprite = _text_sprite(victim, font_size, (235, 235, 235))
+        _paste_sprite(img, victim_sprite, victim_x, y)
+        y += line_h
 
 
 def _normalize_render_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -857,6 +1102,61 @@ def _wg_outline_icon_mask(ship_type: str, size: int) -> Image.Image | None:
     return edge
 
 
+def _heading_bucket(heading_deg: float, bucket_deg: float = 5.0) -> int:
+    return int(round((heading_deg % 360.0) / bucket_deg)) % int(round(360.0 / bucket_deg))
+
+
+@lru_cache(maxsize=4096)
+def _ship_marker_image(
+    ship_type: str,
+    code: str,
+    color: Tuple[int, int, int],
+    size: int,
+    sunk: bool,
+    heading_bucket: int,
+    bucket_deg: float = 5.0,
+) -> Image.Image:
+    heading_deg = (heading_bucket * bucket_deg) % 360.0
+    if sunk:
+        outline_color = (150, 150, 150)
+        edge_mask = _wg_outline_icon_mask(ship_type, size)
+        icon = None
+        if edge_mask is not None:
+            icon = Image.new("RGBA", edge_mask.size, (outline_color[0], outline_color[1], outline_color[2], 0))
+            icon.putalpha(edge_mask)
+    else:
+        icon = _wg_tinted_icon(ship_type, color, size)
+
+    if icon is not None:
+        return icon.rotate(-(heading_deg + WG_ICON_HEADING_OFFSET_DEG), resample=Image.Resampling.BICUBIC, expand=True)
+
+    local_size = max(18, size * 3)
+    local = Image.new("RGBA", (local_size, local_size), (0, 0, 0, 0))
+    local_draw = ImageDraw.Draw(local)
+    lc = local_size // 2
+    if sunk:
+        _draw_ship_icon(
+            local_draw,
+            lc,
+            lc,
+            code,
+            fill_color=None,
+            outline_color=(150, 150, 150),
+            size=max(4, size),
+        )
+    else:
+        _draw_ship_icon(
+            local_draw,
+            lc,
+            lc,
+            code,
+            fill_color=color,
+            outline_color=(220, 220, 220),
+            size=max(4, size),
+        )
+    return local.rotate(-(heading_deg + WG_ICON_HEADING_OFFSET_DEG), resample=Image.Resampling.BICUBIC, expand=True)
+
+
 def _draw_ship_marker(
     img: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -870,64 +1170,19 @@ def _draw_ship_marker(
     size: int,
     sunk: bool = False,
 ) -> None:
-    pasted = False
-    if sunk:
-        outline_color = (150, 150, 150)
-        edge_mask = _wg_outline_icon_mask(ship_type, size)
-        icon = None
-        if edge_mask is not None:
-            icon = Image.new("RGBA", edge_mask.size, (outline_color[0], outline_color[1], outline_color[2], 0))
-            icon.putalpha(edge_mask)
-    else:
-        icon = _wg_tinted_icon(ship_type, color, size)
-    if icon is not None:
-        icon = icon.rotate(-(heading_deg + WG_ICON_HEADING_OFFSET_DEG), resample=Image.Resampling.BICUBIC, expand=True)
-        x = cx - icon.width // 2
-        y = cy - icon.height // 2
-        img.paste(icon, (x, y), icon)
-        pasted = True
-    if not pasted:
-        # Fallback icon path: draw to local layer so we can rotate.
-        local_size = max(18, size * 3)
-        local = Image.new("RGBA", (local_size, local_size), (0, 0, 0, 0))
-        local_draw = ImageDraw.Draw(local)
-        lc = local_size // 2
-        if sunk:
-            _draw_ship_icon(
-                local_draw,
-                lc,
-                lc,
-                code,
-                fill_color=None,
-                outline_color=(150, 150, 150),
-                size=max(4, size),
-            )
-        else:
-            _draw_ship_icon(
-                local_draw,
-                lc,
-                lc,
-                code,
-                fill_color=color,
-                outline_color=(220, 220, 220),
-                size=max(4, size),
-            )
-        local = local.rotate(-(heading_deg + WG_ICON_HEADING_OFFSET_DEG), resample=Image.Resampling.BICUBIC, expand=True)
-        x = cx - local.width // 2
-        y = cy - local.height // 2
-        img.paste(local, (x, y), local)
+    icon = _ship_marker_image(ship_type, code, color, size, sunk, _heading_bucket(heading_deg))
+    x = cx - icon.width // 2
+    y = cy - icon.height // 2
+    img.paste(icon, (x, y), icon)
 
     # Marker name overlay above icon.
     txt = _marker_name_text(marker_label)
     if txt:
-        name_font = _load_font(max(9, size + 3))
-        bbox = draw.textbbox((0, 0), txt, font=name_font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        tx = cx - tw // 2
-        ty = cy - size - th - 4
-        draw.text((tx + 1, ty + 1), txt, fill=(0, 0, 0), font=name_font)
-        draw.text((tx, ty), txt, fill=(255, 255, 255), font=name_font)
+        label = _text_sprite(txt, max(9, size + 3), (255, 255, 255), (0, 0, 0))
+        if label is not None:
+            tx = cx - label.width // 2
+            ty = cy - size - label.height - 4
+            img.paste(label, (tx, ty), label)
 
 
 def _draw_lineup_panel(draw: ImageDraw.ImageDraw, render_tracks: Dict[str, Dict[str, Any]], canvas_size: int) -> None:
@@ -962,6 +1217,66 @@ def _draw_lineup_panel(draw: ImageDraw.ImageDraw, render_tracks: Dict[str, Dict[
             draw.text((left_x + 6, y), _line_text(friendly[i]), fill=(220, 235, 220), font=font)
         if i < len(enemy):
             draw.text((right_x + 6, y), _line_text(enemy[i]), fill=(235, 220, 220), font=font)
+
+
+def _build_frame_base(
+    canonical: Dict[str, Any],
+    render_tracks: Dict[str, Dict[str, Any]],
+    canvas_size: int,
+    margin: int,
+    show_grid: bool,
+    header_font_size: int,
+    bg_color: Tuple[int, int, int] = COLOR_BG,
+) -> Image.Image:
+    img = Image.new("RGB", (canvas_size, canvas_size), bg_color)
+    img = _apply_map_background(img, canonical, margin)
+    draw = ImageDraw.Draw(img)
+
+    if show_grid:
+        grid_steps = 9 if canvas_size >= 800 else 7
+        grid_divisor = max(1, grid_steps - 1)
+        for i in range(grid_steps):
+            x = margin + i * (canvas_size - 2 * margin) // grid_divisor
+            draw.line([(x, margin), (x, canvas_size - margin)], fill=(35, 55, 85), width=1)
+            draw.line([(margin, x), (canvas_size - margin, x)], fill=(35, 55, 85), width=1)
+        if canvas_size >= 800:
+            draw.rectangle([margin, margin, canvas_size - margin, canvas_size - margin], outline=(60, 90, 130), width=2)
+
+    friendly_total = sum(1 for tr in render_tracks.values() if tr.get("team_side") == "friendly")
+    enemy_total = sum(1 for tr in render_tracks.values() if tr.get("team_side") == "enemy")
+    count_sprite = _text_sprite(f"friendly {friendly_total} | enemy {enemy_total}", header_font_size, (220, 220, 220))
+    title_sprite = _text_sprite(_map_title(canonical), header_font_size, (220, 220, 220))
+    _paste_sprite(img, count_sprite, 10, 10)
+    _paste_sprite(img, title_sprite, 10, 10 + max(16, header_font_size + 5))
+    _draw_lineup_panel(draw, render_tracks, canvas_size)
+    return img
+
+
+def _prepare_track_render_data(
+    render_tracks: Dict[str, Dict[str, Any]],
+    half: float,
+    canvas_size: int,
+    margin: int,
+) -> Dict[str, Dict[str, Any]]:
+    prepared: Dict[str, Dict[str, Any]] = {}
+    for entity_key, track in render_tracks.items():
+        points = list(track.get("points", []) or [])
+        if not points:
+            continue
+        times = [float(p.get("t", 0.0)) for p in points]
+        pixels = [
+            _to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin)
+            for p in points
+        ]
+        prepared[str(entity_key)] = {
+            "track": track,
+            "points": points,
+            "times": times,
+            "pixels": pixels,
+            "ship_type": _ship_type(track.get("ship_id")),
+            "ship_class": _ship_class_code(track.get("ship_id")),
+        }
+    return prepared
 
 
 def _capture_timeline(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1034,7 +1349,7 @@ def _team_color_for_id(team_id: Optional[int], local_team_id: Optional[int], ene
     return COLOR_UNKNOWN
 
 
-def _draw_score_overlay(draw: ImageDraw.ImageDraw, canonical: Dict[str, Any], snapshot: Optional[Dict[str, Any]], canvas_size: int) -> None:
+def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: Optional[Dict[str, Any]], canvas_size: int) -> None:
     team_scores: Dict[int, int] = {}
     team_win_score = 0
 
@@ -1074,43 +1389,42 @@ def _draw_score_overlay(draw: ImageDraw.ImageDraw, canonical: Dict[str, Any], sn
     left_score = team_scores.get(left_id, 0) if left_id is not None else 0
     right_score = team_scores.get(right_id, 0) if right_id is not None else 0
 
-    font_score = _load_font(max(14, canvas_size // 36))
-    font_sub = _load_font(max(9, canvas_size // 78))
+    font_score_size = max(14, canvas_size // 36)
+    font_sub_size = max(9, canvas_size // 78)
     left_txt = str(left_score)
     right_txt = str(right_score)
     sep_txt = ":"
     gap = 8
 
-    lbox = draw.textbbox((0, 0), left_txt, font=font_score)
-    sbox = draw.textbbox((0, 0), sep_txt, font=font_score)
-    rbox = draw.textbbox((0, 0), right_txt, font=font_score)
-    lw = lbox[2] - lbox[0]
-    sw = sbox[2] - sbox[0]
-    rw = rbox[2] - rbox[0]
+    left_color = _team_color_for_id(left_id, local_team_id, enemy_team_id)
+    right_color = _team_color_for_id(right_id, local_team_id, enemy_team_id)
+    left_sprite = _text_sprite(left_txt, font_score_size, left_color, (0, 0, 0))
+    sep_sprite = _text_sprite(sep_txt, font_score_size, (220, 220, 220), (0, 0, 0))
+    right_sprite = _text_sprite(right_txt, font_score_size, right_color, (0, 0, 0))
+    if left_sprite is None or sep_sprite is None or right_sprite is None:
+        return
+    lw = left_sprite.width
+    sw = sep_sprite.width
+    rw = right_sprite.width
     total_w = lw + sw + rw + gap * 2
     x = canvas_size // 2 - total_w // 2
     y = 8
 
-    left_color = _team_color_for_id(left_id, local_team_id, enemy_team_id)
-    right_color = _team_color_for_id(right_id, local_team_id, enemy_team_id)
-
-    draw.text((x + 1, y + 1), left_txt, fill=(0, 0, 0), font=font_score)
-    draw.text((x, y), left_txt, fill=left_color, font=font_score)
+    _paste_sprite(img, left_sprite, x, y)
     x += lw + gap
-    draw.text((x + 1, y + 1), sep_txt, fill=(0, 0, 0), font=font_score)
-    draw.text((x, y), sep_txt, fill=(220, 220, 220), font=font_score)
+    _paste_sprite(img, sep_sprite, x, y)
     x += sw + gap
-    draw.text((x + 1, y + 1), right_txt, fill=(0, 0, 0), font=font_score)
-    draw.text((x, y), right_txt, fill=right_color, font=font_score)
+    _paste_sprite(img, right_sprite, x, y)
 
     if team_win_score > 0:
         sub = f"target {team_win_score}"
-        bbox = draw.textbbox((0, 0), sub, font=font_sub)
-        tw = bbox[2] - bbox[0]
+        sub_sprite = _text_sprite(sub, font_sub_size, (200, 200, 200), (0, 0, 0))
+        if sub_sprite is None:
+            return
+        tw = sub_sprite.width
         tx = canvas_size // 2 - tw // 2
-        ty = y + (lbox[3] - lbox[1]) + 1
-        draw.text((tx + 1, ty + 1), sub, fill=(0, 0, 0), font=font_sub)
-        draw.text((tx, ty), sub, fill=(200, 200, 200), font=font_sub)
+        ty = y + left_sprite.height + 1
+        _paste_sprite(img, sub_sprite, tx, ty)
 
 
 def _cap_label(index: Any, fallback_i: int) -> str:
@@ -1342,14 +1656,13 @@ def _stable_heading_deg(points: List[Dict[str, Any]], previous: float | None = N
 
 def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_labels: bool = True, show_grid: bool = True, bg_color: Tuple[int, int, int] = COLOR_BG) -> Image.Image:
     img = Image.new("RGB", (canvas_size, canvas_size), bg_color)
-    draw = ImageDraw.Draw(img)
     font = _load_font(12)
     half = _world_half(canonical)
     margin = 40
-    img = _apply_map_background(img, canonical, margin)
-    draw = ImageDraw.Draw(img)
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
+    img = _build_frame_base(canonical, render_tracks, canvas_size, margin, show_grid, 12, bg_color=bg_color)
+    draw = ImageDraw.Draw(img)
     battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if battle_end <= 0:
         battle_end = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
@@ -1357,19 +1670,12 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     capture_timeline = _capture_timeline(canonical)
     capture_snapshot = _capture_snapshot_at(capture_timeline, battle_end)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
+    kill_feed = _extract_kill_feed(canonical)
 
-    if show_grid:
-        for i in range(9):
-            x = margin + i * (canvas_size - 2 * margin) // 8
-            draw.line([(x, margin), (x, canvas_size - margin)], fill=(35, 55, 85), width=1)
-            draw.line([(margin, x), (canvas_size - margin, x)], fill=(35, 55, 85), width=1)
-        draw.rectangle([margin, margin, canvas_size - margin, canvas_size - margin], outline=(60, 90, 130), width=2)
     _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin)
     _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin)
 
     ordered = sorted(render_tracks.items(), key=lambda kv: kv[1].get("team_side", "unknown"))
-    friendly_total = sum(1 for _, tr in ordered if tr.get("team_side") == "friendly")
-    enemy_total = sum(1 for _, tr in ordered if tr.get("team_side") == "enemy")
     bucket_counts: Dict[Tuple[int, int], int] = {}
     for entity_key, track in ordered:
         pts = track.get("points", [])
@@ -1421,11 +1727,10 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             draw.text((ex + 8, ey - 8), str(label), fill=color, font=font)
 
     duration = int(battle_end)
-    draw.text((10, canvas_size - 22), f"duration={duration}s tracked={len(render_tracks)}", fill=(220, 220, 220), font=font)
-    draw.text((10, 10), f"friendly {friendly_total} | enemy {enemy_total}", fill=(220, 220, 220), font=font)
-    draw.text((10, 28), _map_title(canonical), fill=(220, 220, 220), font=font)
-    _draw_score_overlay(draw, canonical, capture_snapshot, canvas_size)
-    _draw_lineup_panel(draw, render_tracks, canvas_size)
+    duration_sprite = _text_sprite(f"duration={duration}s tracked={len(render_tracks)}", 12, (220, 220, 220))
+    _paste_sprite(img, duration_sprite, 10, canvas_size - 22)
+    _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
+    _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, canvas_size)
     return img
 
 
@@ -1434,6 +1739,7 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
     margin = 40
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
+    prepared_tracks = _prepare_track_render_data(render_tracks, half, canvas_size, margin)
     max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if max_clock <= 0:
         max_clock = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
@@ -1441,49 +1747,42 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
     capture_timeline = _capture_timeline(canonical)
     artillery_traces = _extract_artillery_traces(canonical)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
+    kill_feed = _extract_kill_feed(canonical)
     heading_memory: Dict[str, float] = {}
     ever_spotted_memory: Dict[str, bool] = {}
+    base_frame = _build_frame_base(canonical, render_tracks, canvas_size, margin, show_grid, 11)
 
     frames: List[Image.Image] = []
     t = 0.0
     while t <= max_clock + speed:
-        img = Image.new("RGB", (canvas_size, canvas_size), COLOR_BG)
-        draw = ImageDraw.Draw(img)
-        font = _load_font(11)
-        img = _apply_map_background(img, canonical, margin)
+        img = base_frame.copy()
         draw = ImageDraw.Draw(img)
         bucket_counts: Dict[Tuple[int, int], int] = {}
-        friendly_total = sum(1 for tr in render_tracks.values() if tr.get("team_side") == "friendly")
-        enemy_total = sum(1 for tr in render_tracks.values() if tr.get("team_side") == "enemy")
-
-        if show_grid:
-            for i in range(7):
-                x = margin + i * (canvas_size - 2 * margin) // 6
-                draw.line([(x, margin), (x, canvas_size - margin)], fill=(35, 55, 85), width=1)
-                draw.line([(margin, x), (canvas_size - margin, x)], fill=(35, 55, 85), width=1)
         capture_snapshot = _capture_snapshot_at(capture_timeline, t)
         _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin)
         _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin)
         _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin)
 
-        for entity_key, track in render_tracks.items():
-            all_points = track.get("points", [])
-            if not all_points:
+        for entity_key, prepared in prepared_tracks.items():
+            track = prepared["track"]
+            all_points = prepared["points"]
+            times = prepared["times"]
+            pixels = prepared["pixels"]
+            if not all_points or not times or not pixels:
                 continue
             ekey = str(entity_key)
             side = _color_side(track)
-            points = [p for p in all_points if float(p.get("t", 0.0)) <= t]
+            idx = bisect_right(times, t) - 1
             synthetic_start = False
-            if not points:
+            if idx < 0:
                 if side == "enemy" and not ever_spotted_memory.get(ekey, False):
                     # Enemy ships should not render before first spot.
                     continue
                 # Show known participants from t=0 using first known position as unspotted placeholder.
-                points = [all_points[0]]
+                idx = 0
                 synthetic_start = True
-            ship_type = _ship_type(track.get("ship_id"))
-            ship_class = _ship_class_code(track.get("ship_id"))
-            last_t = float(points[-1].get("t", 0.0))
+            points = all_points[max(0, idx - 9) : idx + 1]
+            last_t = times[idx]
             prev_heading = heading_memory.get(str(entity_key))
             heading_deg = _stable_heading_deg(points, previous=prev_heading, max_step_deg=32.0)
             heading_memory[str(entity_key)] = heading_deg
@@ -1497,11 +1796,11 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
                 # Enemy ships remain hidden until they are first spotted.
                 continue
             color = _status_color(side, spotted=spotted, sunk=sunk, ever_spotted=ever_spotted)
-            poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin) for p in points]
+            poly = pixels[max(0, idx - 23) : idx + 1]
             if len(poly) >= 2:
                 _draw_polyline_with_gaps(
                     draw,
-                    poly[-24:],
+                    poly,
                     tuple(max(0, c // 2) for c in color),
                     width=2,
                     max_jump_px=24,
@@ -1516,8 +1815,8 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
                 draw,
                 cx,
                 cy,
-                ship_type,
-                ship_class,
+                prepared["ship_type"],
+                prepared["ship_class"],
                 color,
                 heading_deg,
                 track.get("player_name"),
@@ -1526,11 +1825,9 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
             )
 
         mins, secs = divmod(int(t), 60)
-        draw.text((canvas_size - 80, 10), f"{mins}:{secs:02d}", fill=(220, 220, 220), font=font)
-        draw.text((10, 10), f"friendly {friendly_total} | enemy {enemy_total}", fill=(220, 220, 220), font=font)
-        draw.text((10, 26), _map_title(canonical), fill=(220, 220, 220), font=font)
-        _draw_score_overlay(draw, canonical, capture_snapshot, canvas_size)
-        _draw_lineup_panel(draw, render_tracks, canvas_size)
+        _paste_sprite(img, _text_sprite(f"{mins}:{secs:02d}", 11, (220, 220, 220)), canvas_size - 80, 10)
+        _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
+        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, canvas_size)
         frames.append(img)
         t += max(1, speed)
 

@@ -277,6 +277,89 @@ def _infer_kill_weapon_kind(
     return "other"
 
 
+def _shell_kind_from_reason(reason_code: Optional[int]) -> Optional[str]:
+    return {
+        17: "ap",
+        18: "he",
+        19: "cs",
+    }.get(reason_code)
+
+
+def _kill_weapon_label(reason_code: Optional[int], weapon_kind: str, shell_kind: Optional[str]) -> str:
+    labels = {
+        2: "ATBA",
+        3: "TORP",
+        4: "BOMB",
+        6: "FIRE",
+        7: "RAM",
+        9: "FLOOD",
+        13: "DEPTH",
+        14: "RKT",
+        17: "AP",
+        18: "HE",
+        19: "CS",
+        22: "SKIP",
+        28: "ADBOMB",
+    }
+    if reason_code in labels:
+        return labels[reason_code]
+    if shell_kind == "ap":
+        return "AP"
+    if shell_kind == "he":
+        return "HE"
+    if shell_kind == "cs":
+        return "CS"
+    generic = {
+        "gun": "GUN",
+        "torpedo": "TORP",
+        "bomb": "BOMB",
+        "other": "KILL",
+    }
+    return generic.get(weapon_kind, "KILL")
+
+
+def _infer_shell_kinds_for_params(
+    vehicle_kills: List[Dict[str, Any]],
+    main_artillery_params: Dict[int, set[int]],
+) -> Dict[int, str]:
+    votes_by_param: Dict[int, Dict[str, int]] = {}
+    for row in vehicle_kills:
+        killer_entity_id = _safe_int(row.get("killer_entity_id"))
+        cause_param_id = _safe_int(row.get("cause_param_id"))
+        reason_code = _safe_int(row.get("reason_code"))
+        shell_kind = _shell_kind_from_reason(reason_code)
+        if killer_entity_id is None or cause_param_id is None or cause_param_id < 0 or shell_kind is None:
+            continue
+        if cause_param_id not in main_artillery_params.get(killer_entity_id, set()):
+            continue
+        votes = votes_by_param.setdefault(cause_param_id, {})
+        votes[shell_kind] = votes.get(shell_kind, 0) + 1
+
+    kind_by_param: Dict[int, str] = {}
+    for param_id, votes in votes_by_param.items():
+        best_kind = max(sorted(votes.keys()), key=lambda key: votes[key])
+        kind_by_param[param_id] = best_kind
+
+    # If a ship exposes two main-gun ammo params and one is identified from a kill,
+    # the other is usually the complementary shell type.
+    for params in main_artillery_params.values():
+        cleaned = sorted(param_id for param_id in params if param_id >= 0)
+        if len(cleaned) != 2:
+            continue
+        known = {param_id: kind_by_param[param_id] for param_id in cleaned if param_id in kind_by_param}
+        if len(known) != 1:
+            continue
+        known_param, known_kind = next(iter(known.items()))
+        if known_kind not in ("ap", "he"):
+            continue
+        other_param = next((param_id for param_id in cleaned if param_id != known_param), None)
+        if other_param is None or other_param in kind_by_param:
+            continue
+        kind_by_param[other_param] = "he" if known_kind == "ap" else "ap"
+
+    return kind_by_param
+
+
 def _norm_name(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -385,6 +468,9 @@ def _extract_battle_overlay(
     timeline: List[Dict[str, Any]] = []
     artillery_shots: List[Dict[str, Any]] = []
     torpedo_points: List[Dict[str, Any]] = []
+    torpedo_params_by_owner: Dict[int, set[int]] = {}
+    vehicle_kills: List[Dict[str, Any]] = []
+    avatar_kills: List[Dict[str, Any]] = []
     seen_shots: set[tuple[int, int]] = set()
     seen_torp_points: set[tuple[int, int, float, float, float]] = set()
     packet_time_ref = [0.0]
@@ -407,6 +493,7 @@ def _extract_battle_overlay(
             if not isinstance(pack, dict):
                 continue
             owner_id = _safe_int(pack.get("ownerID"))
+            params_id = _safe_int(pack.get("paramsID"))
             shots = _iter_values(pack.get("shots", []))
             for shot in shots:
                 if not isinstance(shot, dict):
@@ -436,6 +523,8 @@ def _extract_battle_overlay(
                 artillery_shots.append(
                     {
                         "shooter_entity_id": owner_id if owner_id is not None else -1,
+                        "params_id": params_id if params_id is not None else -1,
+                        "pack_shot_count": len(shots),
                         "shot_id": shot_id if shot_id is not None else -1,
                         "time_s": round(t_fire, 3),
                         "time_end_s": round(t_fire + flight_s, 3),
@@ -473,6 +562,9 @@ def _extract_battle_overlay(
             if not isinstance(pack, dict):
                 continue
             owner_id = _safe_int(pack.get("ownerID"))
+            params_id = _safe_int(pack.get("paramsID"))
+            if owner_id is not None and params_id is not None:
+                torpedo_params_by_owner.setdefault(owner_id, set()).add(params_id)
             for torpedo in _iter_values(pack.get("torpedoes", [])):
                 if not isinstance(torpedo, dict):
                     continue
@@ -488,9 +580,41 @@ def _extract_battle_overlay(
         pos = _vec_xz(args[2])
         _append_torpedo_point(owner_id, torpedo_id, pos)
 
+    def _on_vehicle_kill(entity: Any, *args: Any, **_kwargs: Any) -> None:
+        victim_entity_id = _safe_int(getattr(entity, "id", None))
+        reason_code = _safe_int(args[1]) if len(args) > 1 else None
+        cause_param_id = _safe_int(args[2]) if len(args) > 2 else None
+        killer_entity_id = _safe_int(args[8]) if len(args) > 8 else None
+        vehicle_kills.append(
+            {
+                "time_s": round(float(packet_time_ref[0]), 3),
+                "victim_entity_id": victim_entity_id if victim_entity_id is not None else -1,
+                "killer_entity_id": killer_entity_id if killer_entity_id is not None else -1,
+                "reason_code": reason_code if reason_code is not None else -1,
+                "cause_param_id": cause_param_id if cause_param_id is not None else -1,
+            }
+        )
+
+    def _on_avatar_vehicle_death(_entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if len(args) < 3:
+            return
+        victim_entity_id = _safe_int(args[0])
+        killer_entity_id = _safe_int(args[1])
+        reason_code = _safe_int(args[2])
+        avatar_kills.append(
+            {
+                "time_s": round(float(packet_time_ref[0]), 3),
+                "victim_entity_id": victim_entity_id if victim_entity_id is not None else -1,
+                "killer_entity_id": killer_entity_id if killer_entity_id is not None else -1,
+                "reason_code": reason_code if reason_code is not None else -1,
+            }
+        )
+
     _subscribe_method("Avatar_receiveArtilleryShots", _on_artillery_shots)
     _subscribe_method("Avatar_receiveTorpedoes", _on_torpedoes)
     _subscribe_method("Avatar_receiveTorpedoDirection", _on_torpedo_direction)
+    _subscribe_method("Vehicle_kill", _on_vehicle_kill)
+    _subscribe_method("Avatar_receiveVehicleDeath", _on_avatar_vehicle_death)
     try:
         for p in packets:
             packet_time_ref[0] = float(p.time)
@@ -623,6 +747,129 @@ def _extract_battle_overlay(
                 enemy_team_id = tid
                 break
 
+    filtered_artillery_shots, secondary_groups, secondary_dropped, main_artillery_params, all_artillery_params = _filter_main_artillery_shots(artillery_shots)
+    shell_kind_by_param = _infer_shell_kinds_for_params(vehicle_kills, main_artillery_params)
+    for shot in filtered_artillery_shots:
+        params_id = _safe_int(shot.get("params_id"))
+        if params_id is None:
+            continue
+        shell_kind = shell_kind_by_param.get(params_id)
+        if shell_kind:
+            shot["shell_kind"] = shell_kind
+
+    vehicle_kills_by_victim: Dict[int, List[Dict[str, Any]]] = {}
+    for row in vehicle_kills:
+        victim_entity_id = _safe_int(row.get("victim_entity_id"))
+        if victim_entity_id is None or victim_entity_id < 0:
+            continue
+        vehicle_kills_by_victim.setdefault(victim_entity_id, []).append(row)
+    for rows in vehicle_kills_by_victim.values():
+        rows.sort(key=lambda row: float(row.get("time_s", 0.0)))
+
+    used_vehicle_kills: set[tuple[int, int, int]] = set()
+
+    def _match_vehicle_kill(victim_entity_id: int, time_s: float) -> Optional[Dict[str, Any]]:
+        candidates = vehicle_kills_by_victim.get(victim_entity_id, [])
+        best: Optional[Dict[str, Any]] = None
+        best_delta = 9999.0
+        for row in candidates:
+            row_time = float(row.get("time_s", 0.0))
+            delta = abs(row_time - time_s)
+            if delta > 1.25 or delta >= best_delta:
+                continue
+            match_key = (
+                int(row.get("victim_entity_id", -1)),
+                int(round(row_time * 1000.0)),
+                int(row.get("cause_param_id", -1)),
+            )
+            if match_key in used_vehicle_kills:
+                continue
+            best = row
+            best_delta = delta
+        if best is not None:
+            used_vehicle_kills.add(
+                (
+                    int(best.get("victim_entity_id", -1)),
+                    int(round(float(best.get("time_s", 0.0)) * 1000.0)),
+                    int(best.get("cause_param_id", -1)),
+                )
+            )
+        return best
+
+    kill_feed: List[Dict[str, Any]] = []
+    seen_kill_keys: set[tuple[int, int]] = set()
+    for row in sorted(avatar_kills, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("victim_entity_id", -1)))):
+        victim_entity_id = _safe_int(row.get("victim_entity_id"))
+        if victim_entity_id is None or victim_entity_id < 0:
+            continue
+        time_s = round(float(row.get("time_s", 0.0)), 3)
+        reason_code = _safe_int(row.get("reason_code"))
+        killer_entity_id = _safe_int(row.get("killer_entity_id"))
+        matched_vehicle_kill = _match_vehicle_kill(victim_entity_id, time_s)
+        cause_param_id = _safe_int(matched_vehicle_kill.get("cause_param_id")) if matched_vehicle_kill else None
+        if matched_vehicle_kill is not None and (killer_entity_id is None or killer_entity_id < 0):
+            killer_entity_id = _safe_int(matched_vehicle_kill.get("killer_entity_id"))
+        if matched_vehicle_kill is not None and (reason_code is None or reason_code < 0):
+            reason_code = _safe_int(matched_vehicle_kill.get("reason_code"))
+
+        weapon_kind = _infer_kill_weapon_kind(
+            reason_code,
+            cause_param_id,
+            killer_entity_id,
+            main_artillery_params,
+            all_artillery_params,
+            torpedo_params_by_owner,
+        )
+        shell_kind = _shell_kind_from_reason(reason_code)
+        weapon_label = _kill_weapon_label(reason_code, weapon_kind, shell_kind)
+        kill_key = (victim_entity_id, int(round(time_s * 1000.0)))
+        if kill_key in seen_kill_keys:
+            continue
+        seen_kill_keys.add(kill_key)
+        kill_feed.append(
+            {
+                "time_s": time_s,
+                "victim_entity_id": victim_entity_id,
+                "killer_entity_id": killer_entity_id if killer_entity_id is not None else -1,
+                "reason_code": reason_code if reason_code is not None else -1,
+                "cause_param_id": cause_param_id if cause_param_id is not None else -1,
+                "weapon_kind": weapon_kind,
+                "weapon_label": weapon_label,
+                "shell_kind": shell_kind or "",
+            }
+        )
+
+    if not kill_feed:
+        for row in sorted(vehicle_kills, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("victim_entity_id", -1)))):
+            victim_entity_id = _safe_int(row.get("victim_entity_id"))
+            if victim_entity_id is None or victim_entity_id < 0:
+                continue
+            time_s = round(float(row.get("time_s", 0.0)), 3)
+            reason_code = _safe_int(row.get("reason_code"))
+            killer_entity_id = _safe_int(row.get("killer_entity_id"))
+            cause_param_id = _safe_int(row.get("cause_param_id"))
+            weapon_kind = _infer_kill_weapon_kind(
+                reason_code,
+                cause_param_id,
+                killer_entity_id,
+                main_artillery_params,
+                all_artillery_params,
+                torpedo_params_by_owner,
+            )
+            shell_kind = _shell_kind_from_reason(reason_code)
+            kill_feed.append(
+                {
+                    "time_s": time_s,
+                    "victim_entity_id": victim_entity_id,
+                    "killer_entity_id": killer_entity_id if killer_entity_id is not None else -1,
+                    "reason_code": reason_code if reason_code is not None else -1,
+                    "cause_param_id": cause_param_id if cause_param_id is not None else -1,
+                    "weapon_kind": weapon_kind,
+                    "weapon_label": _kill_weapon_label(reason_code, weapon_kind, shell_kind),
+                    "shell_kind": shell_kind or "",
+                }
+            )
+
     return {
         "captures_timeline": filtered,
         "control_points": control_points,
@@ -630,7 +877,7 @@ def _extract_battle_overlay(
         "team_win_score": team_win_score,
         "local_team_id": local_team_id,
         "enemy_team_id": enemy_team_id,
-        "artillery_shots": sorted(artillery_shots, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("shot_id", -1)))),
+        "artillery_shots": sorted(filtered_artillery_shots, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("shot_id", -1)))),
         "torpedo_points": sorted(
             torpedo_points,
             key=lambda item: (
@@ -639,6 +886,10 @@ def _extract_battle_overlay(
                 int(item.get("torpedo_id", -1)),
             ),
         ),
+        "kill_feed": sorted(kill_feed, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("victim_entity_id", -1)))),
+        "secondary_artillery_groups": secondary_groups,
+        "secondary_artillery_dropped_shots": secondary_dropped,
+        "shell_kinds_resolved": len(shell_kind_by_param),
     }
 
 
@@ -849,6 +1100,10 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
         "control_points": len(battle_state.get("control_points", [])),
         "artillery_shots": len(battle_state.get("artillery_shots", [])),
         "torpedo_points": len(battle_state.get("torpedo_points", [])),
+        "kill_feed": len(battle_state.get("kill_feed", [])),
+        "secondary_artillery_groups": int(battle_state.get("secondary_artillery_groups", 0) or 0),
+        "secondary_artillery_dropped_shots": int(battle_state.get("secondary_artillery_dropped_shots", 0) or 0),
+        "shell_kinds_resolved": int(battle_state.get("shell_kinds_resolved", 0) or 0),
         "packet_total": sum(packet_counts.values()),
         "client_version": ".".join(context.version),
     }

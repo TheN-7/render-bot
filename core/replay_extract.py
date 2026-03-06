@@ -114,6 +114,8 @@ def _normalize_artillery_fires(raw_fires: Any) -> list[Dict[str, Any]]:
                 "shot_id": _safe_int(row.get("shot_id")) or -1,
                 "time_s": t0,
                 "time_end_s": t1,
+                "params_id": _safe_int(row.get("params_id")) or -1,
+                "shell_kind": str(row.get("shell_kind") or "").strip().lower(),
                 "x0": float(row.get("x0", 0.0) or 0.0),
                 "z0": float(row.get("z0", 0.0) or 0.0),
                 "x1": float(row.get("x1", 0.0) or 0.0),
@@ -162,6 +164,33 @@ def _normalize_torpedo_points(raw_points: Any, owner_team: Dict[str, str]) -> li
         )
     )
     return points
+
+
+def _normalize_kill_feed(raw_kills: Any) -> list[Dict[str, Any]]:
+    if not isinstance(raw_kills, list):
+        return []
+    kills: list[Dict[str, Any]] = []
+    for row in raw_kills:
+        if not isinstance(row, dict):
+            continue
+        killer_entity_id = _safe_int(row.get("killer_entity_id"))
+        victim_entity_id = _safe_int(row.get("victim_entity_id"))
+        if victim_entity_id is None:
+            continue
+        kills.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "killer_entity_key": str(killer_entity_id if killer_entity_id is not None else -1),
+                "victim_entity_key": str(victim_entity_id),
+                "reason_code": _safe_int(row.get("reason_code")) or -1,
+                "cause_param_id": _safe_int(row.get("cause_param_id")) or -1,
+                "weapon_kind": str(row.get("weapon_kind") or "other"),
+                "weapon_label": str(row.get("weapon_label") or "KILL"),
+                "shell_kind": str(row.get("shell_kind") or "").strip().lower(),
+            }
+        )
+    kills.sort(key=lambda item: (float(item.get("time_s", 0.0)), str(item.get("victim_entity_key", ""))))
+    return kills
 
 
 def _build_canonical(extraction) -> Dict[str, Any]:
@@ -223,6 +252,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
     captures_timeline = _normalize_capture_timeline(battle_state.get("captures_timeline", []))
     artillery_fires = _normalize_artillery_fires(battle_state.get("artillery_shots", []))
     torpedo_points = _normalize_torpedo_points(battle_state.get("torpedo_points", []), owner_team)
+    kill_feed = _normalize_kill_feed(battle_state.get("kill_feed", []))
     control_points = _normalize_control_points(battle_state.get("control_points", []))
     local_team_id = _safe_int(battle_state.get("local_team_id"))
     enemy_team_id = _safe_int(battle_state.get("enemy_team_id"))
@@ -254,6 +284,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "deaths": sorted(deaths, key=lambda item: item["time_s"]),
             "captures": captures_timeline,
             "fires": artillery_fires,
+            "kills": kill_feed,
             "spotting": [],
             "torpedoes": torpedo_points,
         },
@@ -262,6 +293,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "track_points": sum(len(t.get("points", [])) for t in tracks.values()),
             "battle_end_s": battle_end_s,
             "deaths": len(deaths),
+            "kills": len(kill_feed),
             "artillery_shots": len(artillery_fires),
             "torpedo_points": len(torpedo_points),
             "team_scores_final": final_scores,

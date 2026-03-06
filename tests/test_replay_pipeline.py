@@ -56,6 +56,7 @@ class ReplayPipelineTests(unittest.TestCase):
 
         self.assertIsInstance(meta.get("control_points", []), list)
         self.assertIsInstance(events.get("captures", []), list)
+        self.assertIsInstance(events.get("kills", []), list)
         self.assertIsInstance(stats.get("team_scores_final", {}), dict)
         self.assertIn("team_win_score", stats)
 
