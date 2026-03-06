@@ -12,67 +12,96 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 
 from core.minimap_data import load_canonical_data, canonical_to_legacy
-from renderers.minimap_renderer import render_static, render_gif_frames
+from renderers.minimap_renderer import iter_animation_frames, render_static, render_gif_frames
 
 
 def _save_mp4(frames, out_mp4: str, fps: int) -> None:
-    # Preferred path: imageio writer.
+    iterator = iter(frames)
+    try:
+        first_frame = next(iterator)
+    except StopIteration as exc:
+        raise RuntimeError("No frames were generated for MP4 export") from exc
+
+    frame_size = first_frame.size
+    fps = max(1, int(fps))
+
+    # Preferred path: imageio writer with higher-quality H.264 settings.
     try:
         import numpy as np
         import imageio.v2 as imageio
+    except Exception:
+        np = None
+        imageio = None
 
-        writer = imageio.get_writer(out_mp4, fps=max(1, fps), codec="libx264", macro_block_size=None)
+    if imageio is not None and np is not None:
+        writer = imageio.get_writer(
+            out_mp4,
+            fps=fps,
+            codec="libx264",
+            macro_block_size=None,
+            pixelformat="yuv420p",
+            output_params=["-crf", "18", "-preset", "medium", "-movflags", "+faststart"],
+        )
         try:
-            for frame in frames:
+            writer.append_data(np.array(first_frame.convert("RGB")))
+            for frame in iterator:
                 writer.append_data(np.array(frame.convert("RGB")))
         finally:
             writer.close()
         return
-    except Exception:
-        pass
 
-    # Fallback: ffmpeg conversion from temporary GIF.
+    # Fallback: ffmpeg raw-frame pipe to preserve full frame quality.
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("MP4 export requires imageio+numpy or ffmpeg in PATH")
 
-    tmp_path = None
+    process = subprocess.Popen(
+        [
+            ffmpeg,
+            "-y",
+            "-f",
+            "rawvideo",
+            "-vcodec",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{frame_size[0]}x{frame_size[1]}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-preset",
+            "medium",
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+            out_mp4,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
-        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmp:
-            tmp_path = tmp.name
-
-        frame_ms = int(1000 / max(1, fps))
-        frames[0].save(
-            tmp_path,
-            save_all=True,
-            append_images=frames[1:],
-            duration=frame_ms,
-            loop=0,
-            optimize=False,
-        )
-
-        subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-i",
-                tmp_path,
-                "-movflags",
-                "+faststart",
-                "-pix_fmt",
-                "yuv420p",
-                out_mp4,
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        assert process.stdin is not None
+        process.stdin.write(first_frame.convert("RGB").tobytes())
+        for frame in iterator:
+            process.stdin.write(frame.convert("RGB").tobytes())
+        process.stdin.close()
+        _, stderr = process.communicate()
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        if process.stdin and not process.stdin.closed:
+            process.stdin.close()
+    if process.returncode != 0:
+        raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg MP4 export failed")
 
 
 def main() -> None:
@@ -111,14 +140,13 @@ def main() -> None:
     out_png = args.png
     bg = tuple(int(v) for v in args.bg_color.split(","))
 
-    gif_size = min(args.size, 600)
-    frames = render_gif_frames(
+    mp4_frames = iter_animation_frames(
         canonical,
-        canvas_size=gif_size,
+        canvas_size=args.size,
         speed=args.speed,
         show_grid=not args.no_grid,
     )
-    _save_mp4(frames, out_mp4, args.fps)
+    _save_mp4(mp4_frames, out_mp4, args.fps)
     print(f"Saved MP4: {out_mp4}")
 
     if out_png:
@@ -133,6 +161,13 @@ def main() -> None:
         print(f"Saved PNG: {out_png}")
 
     if args.gif:
+        gif_size = min(args.size, 720)
+        frames = render_gif_frames(
+            canonical,
+            canvas_size=gif_size,
+            speed=args.speed,
+            show_grid=not args.no_grid,
+        )
         frame_ms = int(1000 / max(1, args.fps))
         frames[0].save(
             args.gif,

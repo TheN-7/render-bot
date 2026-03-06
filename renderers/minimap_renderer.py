@@ -1734,7 +1734,7 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     return img
 
 
-def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 3, show_grid: bool = True) -> List[Image.Image]:
+def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 3, show_grid: bool = True):
     half = _world_half(canonical)
     margin = 40
     death_times = _find_death_times(canonical)
@@ -1750,9 +1750,11 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
     kill_feed = _extract_kill_feed(canonical)
     heading_memory: Dict[str, float] = {}
     ever_spotted_memory: Dict[str, bool] = {}
-    base_frame = _build_frame_base(canonical, render_tracks, canvas_size, margin, show_grid, 11)
+    ui_font_size = max(11, canvas_size // 56)
+    marker_size = max(6, canvas_size // 96)
+    clock_x = canvas_size - max(80, ui_font_size * 7)
+    base_frame = _build_frame_base(canonical, render_tracks, canvas_size, margin, show_grid, ui_font_size)
 
-    frames: List[Image.Image] = []
     t = 0.0
     while t <= max_clock + speed:
         img = base_frame.copy()
@@ -1820,15 +1822,17 @@ def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: 
                 color,
                 heading_deg,
                 track.get("player_name"),
-                size=6,
+                size=marker_size,
                 sunk=sunk,
             )
 
         mins, secs = divmod(int(t), 60)
-        _paste_sprite(img, _text_sprite(f"{mins}:{secs:02d}", 11, (220, 220, 220)), canvas_size - 80, 10)
+        _paste_sprite(img, _text_sprite(f"{mins}:{secs:02d}", ui_font_size, (220, 220, 220)), clock_x, 10)
         _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
         _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, canvas_size)
-        frames.append(img)
+        yield img
         t += max(1, speed)
 
-    return frames
+
+def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: int = 3, show_grid: bool = True) -> List[Image.Image]:
+    return list(iter_animation_frames(canonical, canvas_size=canvas_size, speed=speed, show_grid=show_grid))
