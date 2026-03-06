@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import math
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
@@ -458,6 +459,141 @@ def _snapshot_battle_state(
     }
 
 
+def _snapshot_health_state(entities: Dict[int, Any], time_s: float) -> Dict[str, Any] | None:
+    vehicles: Dict[str, Dict[str, Any]] = {}
+    for entity in entities.values():
+        try:
+            if entity.get_name() != "Vehicle":
+                continue
+        except Exception:
+            continue
+        client = entity.properties.get("client", {}) if hasattr(entity, "properties") else {}
+        if not isinstance(client, dict):
+            continue
+        hp = _safe_float(client.get("health"), -1.0)
+        max_hp = _safe_float(client.get("maxHealth"), 0.0)
+        if hp < 0.0 and max_hp <= 0.0:
+            continue
+        alive_value = client.get("isAlive")
+        alive = bool(alive_value) if alive_value is not None else hp > 0.0
+        vehicles[str(int(entity.id))] = {
+            "hp": max(0, int(round(hp))),
+            "max_hp": max(0, int(round(max_hp))),
+            "alive": bool(alive),
+        }
+
+    if not vehicles:
+        return None
+
+    return {
+        "time_s": round(float(time_s), 3),
+        "entities": vehicles,
+    }
+
+
+def _sum_damage_value(value: Any) -> float:
+    if isinstance(value, dict):
+        return sum(_sum_damage_value(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        if len(value) == 2:
+            try:
+                float(value[0])
+                return float(value[1])
+            except (TypeError, ValueError):
+                pass
+        return sum(_sum_damage_value(v) for v in value)
+    return 0.0
+
+
+def _local_player_row(info: Dict[str, Any], player_name: str) -> Dict[str, Any]:
+    players = info.get("players", {})
+    avatar_id = _safe_int(info.get("player_id"))
+    rows = list(players.values()) if isinstance(players, dict) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if avatar_id is not None and _safe_int(row.get("avatarId")) == avatar_id:
+            return row
+    player_name_norm = _norm_name(player_name)
+    if player_name_norm:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if _norm_name(row.get("name")) == player_name_norm:
+                return row
+    return {}
+
+
+def _snapshot_player_status(info: Dict[str, Any], player_name: str, time_s: float) -> Dict[str, Any] | None:
+    row = _local_player_row(info, player_name)
+    if not row:
+        return None
+
+    avatar_entity_id = _safe_int(info.get("player_id"))
+    ribbons_raw = info.get("ribbons", {})
+    ribbons: Dict[str, int] = {}
+    if avatar_entity_id is not None and isinstance(ribbons_raw, dict):
+        raw_counts = ribbons_raw.get(avatar_entity_id, {})
+        if isinstance(raw_counts, dict):
+            for ribbon_id, count in raw_counts.items():
+                rid = _safe_int(ribbon_id)
+                cnt = _safe_int(count)
+                if rid is None or cnt is None or cnt <= 0:
+                    continue
+                ribbons[str(rid)] = cnt
+
+    return {
+        "time_s": round(float(time_s), 3),
+        "avatar_entity_id": avatar_entity_id if avatar_entity_id is not None else -1,
+        "ship_entity_id": _safe_int(row.get("shipId")) or -1,
+        "ship_params_id": _safe_int(row.get("shipParamsId")) or -1,
+        "team_id": _safe_int(row.get("teamId")) if _safe_int(row.get("teamId")) is not None else -1,
+        "player_name": str(row.get("name") or player_name or "").strip(),
+        "max_health": max(0, _safe_int(row.get("maxHealth")) or 0),
+        "damage_total": round(_sum_damage_value(info.get("damage_map", {})), 3),
+        "ribbons": ribbons,
+    }
+
+
+def _filter_health_timeline(timeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    filtered: List[Dict[str, Any]] = []
+    last_key = None
+    for snap in timeline:
+        entities = snap.get("entities", {})
+        if not isinstance(entities, dict) or not entities:
+            continue
+        state_key = tuple(
+            (
+                str(entity_key),
+                int((state or {}).get("hp", 0)),
+                int((state or {}).get("max_hp", 0)),
+                int(bool((state or {}).get("alive", False))),
+            )
+            for entity_key, state in sorted(entities.items(), key=lambda item: int(item[0]))
+        )
+        if state_key != last_key:
+            filtered.append(snap)
+            last_key = state_key
+    return filtered
+
+
+def _filter_player_status_timeline(timeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    filtered: List[Dict[str, Any]] = []
+    last_key = None
+    for snap in timeline:
+        ribbons = snap.get("ribbons", {})
+        if not isinstance(ribbons, dict):
+            ribbons = {}
+        state_key = (
+            round(float(snap.get("damage_total", 0.0) or 0.0), 3),
+            tuple((str(k), int(v)) for k, v in sorted(ribbons.items(), key=lambda item: int(item[0]))),
+        )
+        if state_key != last_key:
+            filtered.append(snap)
+            last_key = state_key
+    return filtered
+
+
 def _extract_battle_overlay(
     context: ReplayContext,
     packets: List[DecodedPacket],
@@ -466,17 +602,38 @@ def _extract_battle_overlay(
     replay_player = WowsReplayPlayer(context.version)
     cap_positions: Dict[int, Dict[str, Any]] = {}
     timeline: List[Dict[str, Any]] = []
+    health_timeline: List[Dict[str, Any]] = []
+    player_status_timeline: List[Dict[str, Any]] = []
     artillery_shots: List[Dict[str, Any]] = []
     torpedo_points: List[Dict[str, Any]] = []
+    chat_messages: List[Dict[str, Any]] = []
     torpedo_params_by_owner: Dict[int, set[int]] = {}
     vehicle_kills: List[Dict[str, Any]] = []
     avatar_kills: List[Dict[str, Any]] = []
     seen_shots: set[tuple[int, int]] = set()
     seen_torp_points: set[tuple[int, int, float, float, float]] = set()
+    seen_chat_messages: set[tuple[float, str, str]] = set()
     packet_time_ref = [0.0]
     next_sample_t = 0.0
     max_time = float(packets[-1].time) if packets else 0.0
     subscriptions_added: List[tuple[str, List[Any], Any]] = []
+    local_player_name = str(context.engine_data.get("playerName") or "").strip()
+
+    def _sample_overlay_state(sample_t: float) -> None:
+        snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, sample_t)
+        if snap is not None:
+            timeline.append(snap)
+        health_snap = _snapshot_health_state(replay_player._battle_controller.entities, sample_t)
+        if health_snap is not None:
+            health_timeline.append(health_snap)
+        try:
+            info = replay_player.get_info()
+        except Exception:
+            info = None
+        if isinstance(info, dict):
+            player_status = _snapshot_player_status(info, local_player_name, sample_t)
+            if player_status is not None:
+                player_status_timeline.append(player_status)
 
     def _subscribe_method(method_hash: str, callback: Any) -> None:
         subscriptions = Entity._methods_subscriptions.get(method_hash)
@@ -580,6 +737,26 @@ def _extract_battle_overlay(
         pos = _vec_xz(args[2])
         _append_torpedo_point(owner_id, torpedo_id, pos)
 
+    def _on_chat_message(_entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if len(args) < 2:
+            return
+        sender = str(args[0] or "").strip()
+        message = str(args[1] or "").strip()
+        if not message:
+            return
+        time_s = round(float(packet_time_ref[0]), 3)
+        dedup_key = (time_s, sender, message)
+        if dedup_key in seen_chat_messages:
+            return
+        seen_chat_messages.add(dedup_key)
+        chat_messages.append(
+            {
+                "time_s": time_s,
+                "sender": sender,
+                "message": message,
+            }
+        )
+
     def _on_vehicle_kill(entity: Any, *args: Any, **_kwargs: Any) -> None:
         victim_entity_id = _safe_int(getattr(entity, "id", None))
         reason_code = _safe_int(args[1]) if len(args) > 1 else None
@@ -613,6 +790,8 @@ def _extract_battle_overlay(
     _subscribe_method("Avatar_receiveArtilleryShots", _on_artillery_shots)
     _subscribe_method("Avatar_receiveTorpedoes", _on_torpedoes)
     _subscribe_method("Avatar_receiveTorpedoDirection", _on_torpedo_direction)
+    _subscribe_method("Avatar_chatMessage", _on_chat_message)
+    _subscribe_method("Account_chatMessage", _on_chat_message)
     _subscribe_method("Vehicle_kill", _on_vehicle_kill)
     _subscribe_method("Avatar_receiveVehicleDeath", _on_avatar_vehicle_death)
     try:
@@ -620,9 +799,7 @@ def _extract_battle_overlay(
             packet_time_ref[0] = float(p.time)
             if p.packet_obj is None:
                 while float(p.time) >= next_sample_t:
-                    snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, next_sample_t)
-                    if snap is not None:
-                        timeline.append(snap)
+                    _sample_overlay_state(next_sample_t)
                     next_sample_t += 1.0
                 continue
 
@@ -650,9 +827,7 @@ def _extract_battle_overlay(
                             }
 
             while float(p.time) >= next_sample_t:
-                snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, next_sample_t)
-                if snap is not None:
-                    timeline.append(snap)
+                _sample_overlay_state(next_sample_t)
                 next_sample_t += 1.0
     finally:
         for method_hash, subscriptions, callback in subscriptions_added:
@@ -664,9 +839,7 @@ def _extract_battle_overlay(
                 Entity._methods_subscriptions.pop(method_hash, None)
 
     if timeline and timeline[-1].get("time_s", 0.0) < max_time:
-        final_snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, max_time)
-        if final_snap is not None:
-            timeline.append(final_snap)
+        _sample_overlay_state(max_time)
 
     # Keep only state-changing snapshots.
     filtered: List[Dict[str, Any]] = []
@@ -694,6 +867,9 @@ def _extract_battle_overlay(
         if state_key != last_key:
             filtered.append(snap)
             last_key = state_key
+
+    filtered_health = _filter_health_timeline(health_timeline)
+    filtered_player_status = _filter_player_status_timeline(player_status_timeline)
 
     layout_by_id: Dict[int, Dict[str, Any]] = {}
     for snap in filtered:
@@ -870,8 +1046,28 @@ def _extract_battle_overlay(
                 }
             )
 
+    player_status_meta: Dict[str, Any] = {}
+    for snap in filtered_player_status:
+        ship_entity_id = _safe_int(snap.get("ship_entity_id"))
+        ship_params_id = _safe_int(snap.get("ship_params_id"))
+        avatar_entity_id = _safe_int(snap.get("avatar_entity_id"))
+        if ship_entity_id is None and ship_params_id is None and avatar_entity_id is None:
+            continue
+        player_status_meta = {
+            "player_name": str(snap.get("player_name") or local_player_name or "").strip(),
+            "avatar_entity_id": avatar_entity_id if avatar_entity_id is not None else -1,
+            "ship_entity_id": ship_entity_id if ship_entity_id is not None else -1,
+            "ship_params_id": ship_params_id if ship_params_id is not None else -1,
+            "team_id": _safe_int(snap.get("team_id")) if _safe_int(snap.get("team_id")) is not None else -1,
+            "max_health": max(0, _safe_int(snap.get("max_health")) or 0),
+        }
+        break
+
     return {
         "captures_timeline": filtered,
+        "health_timeline": filtered_health,
+        "player_status_timeline": filtered_player_status,
+        "player_status_meta": player_status_meta,
         "control_points": control_points,
         "final_scores": final_scores,
         "team_win_score": team_win_score,
@@ -887,6 +1083,7 @@ def _extract_battle_overlay(
             ),
         ),
         "kill_feed": sorted(kill_feed, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("victim_entity_id", -1)))),
+        "chat_messages": sorted(chat_messages, key=lambda item: (float(item.get("time_s", 0.0)), str(item.get("sender", "")))),
         "secondary_artillery_groups": secondary_groups,
         "secondary_artillery_dropped_shots": secondary_dropped,
         "shell_kinds_resolved": len(shell_kind_by_param),
@@ -1005,6 +1202,40 @@ def _build_session_map(context: ReplayContext, packets: List[DecodedPacket]) -> 
     return _build_session_map_heuristic(context.engine_data, packets), "heuristic"
 
 
+def _sanitize_player_track(points: List[TrackPoint]) -> List[TrackPoint]:
+    if not points:
+        return points
+
+    grouped: List[List[TrackPoint]] = []
+    current_group: List[TrackPoint] = [points[0]]
+    for point in points[1:]:
+        if abs(point.t - current_group[-1].t) <= 1e-6:
+            current_group.append(point)
+        else:
+            grouped.append(current_group)
+            current_group = [point]
+    grouped.append(current_group)
+
+    sanitized: List[TrackPoint] = []
+    prev: Optional[TrackPoint] = None
+    for group in grouped:
+        if len(group) == 1:
+            choice = group[0]
+        elif prev is None:
+            choice = max(group, key=lambda p: (abs(p.yaw), abs(p.x) + abs(p.z)))
+        else:
+            choice = min(
+                group,
+                key=lambda p: (
+                    math.hypot(p.x - prev.x, p.z - prev.z),
+                    abs(p.yaw) < 1e-6,
+                ),
+            )
+        sanitized.append(choice)
+        prev = choice
+    return sanitized
+
+
 def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> ReplayExtraction:
     meta = context.engine_data
     session_map, session_map_source = _build_session_map(context, packets)
@@ -1015,12 +1246,17 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
 
     player_session_id = next((eid for eid, v in session_map.items() if _safe_int(v.get("relation")) == 0), None)
     local_team_id = next((_safe_int(v.get("teamId")) for v in session_map.values() if _safe_int(v.get("relation")) == 0), None)
+    has_player_position = any(isinstance(p.packet_obj, PlayerPosition) for p in packets)
 
     for p in packets:
         packet_counts[p.packet_name] = packet_counts.get(p.packet_name, 0) + 1
 
         if isinstance(p.packet_obj, Position):
             eid = int(p.packet_obj.entityId)
+            if has_player_position and player_session_id is not None and eid == player_session_id:
+                # The local player ship also emits PlayerPosition packets. Mixing both streams creates
+                # interleaved bogus jumps and unstable heading for the player marker.
+                continue
             x = float(p.packet_obj.position.x)
             y = float(p.packet_obj.position.y)
             z = float(p.packet_obj.position.z)
@@ -1089,6 +1325,8 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
 
     for track in tracks.values():
         track.points.sort(key=lambda item: item.t)
+    if player_session_id is not None and player_session_id in tracks:
+        tracks[player_session_id].points = _sanitize_player_track(tracks[player_session_id].points)
 
     battle_state = _extract_battle_overlay(context, packets, local_team_id)
     diagnostics = {
@@ -1101,6 +1339,7 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
         "artillery_shots": len(battle_state.get("artillery_shots", [])),
         "torpedo_points": len(battle_state.get("torpedo_points", [])),
         "kill_feed": len(battle_state.get("kill_feed", [])),
+        "chat_messages": len(battle_state.get("chat_messages", [])),
         "secondary_artillery_groups": int(battle_state.get("secondary_artillery_groups", 0) or 0),
         "secondary_artillery_dropped_shots": int(battle_state.get("secondary_artillery_dropped_shots", 0) or 0),
         "shell_kinds_resolved": int(battle_state.get("shell_kinds_resolved", 0) or 0),

@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import math
 
 from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import read_replay, decode_packets
@@ -57,6 +58,8 @@ class ReplayPipelineTests(unittest.TestCase):
         self.assertIsInstance(meta.get("control_points", []), list)
         self.assertIsInstance(events.get("captures", []), list)
         self.assertIsInstance(events.get("kills", []), list)
+        self.assertIsInstance(events.get("health", []), list)
+        self.assertIsInstance(events.get("player_status", []), list)
         self.assertIsInstance(stats.get("team_scores_final", {}), dict)
         self.assertIn("team_win_score", stats)
 
@@ -66,6 +69,21 @@ class ReplayPipelineTests(unittest.TestCase):
             self.assertIn("time_s", snap)
             self.assertIn("caps", snap)
             self.assertIn("team_scores", snap)
+
+        health = events.get("health", [])
+        if health:
+            snap = health[0]
+            self.assertIn("time_s", snap)
+            self.assertIn("entities", snap)
+            self.assertIsInstance(snap.get("entities"), dict)
+
+        player_status = events.get("player_status", [])
+        if player_status:
+            snap = player_status[0]
+            self.assertIn("time_s", snap)
+            self.assertIn("damage_total", snap)
+            self.assertIn("ribbons", snap)
+            self.assertIn("ship_entity_key", snap)
 
     def test_account_team_alignment(self):
         data = extract_replay(str(SAMPLE))
@@ -97,6 +115,32 @@ class ReplayPipelineTests(unittest.TestCase):
 
         self.assertGreater(len(mapped_accounts), 0)
         self.assertEqual(len(mapped_accounts), len(set(mapped_accounts)))
+
+    def test_local_player_track_has_no_impossible_jumps(self):
+        data = extract_replay(str(SAMPLE))
+        player_name = str((data.get("meta", {}) or {}).get("playerName") or "").strip()
+        self.assertTrue(player_name)
+
+        player_track = None
+        for track in (data.get("tracks", {}) or {}).values():
+            if str(track.get("player_name") or "").strip() == player_name:
+                player_track = track
+                break
+
+        self.assertIsNotNone(player_track)
+        points = list((player_track or {}).get("points", []))
+        self.assertGreater(len(points), 0)
+
+        bad_jumps = []
+        for a, b in zip(points, points[1:]):
+            dt = float(b.get("t", 0.0)) - float(a.get("t", 0.0))
+            if dt <= 0.0:
+                continue
+            dist = math.hypot(float(b.get("x", 0.0)) - float(a.get("x", 0.0)), float(b.get("z", 0.0)) - float(a.get("z", 0.0)))
+            if dist > 35.0:
+                bad_jumps.append((a.get("t"), b.get("t"), dist))
+
+        self.assertEqual([], bad_jumps[:5], msg=f"unexpected local-player jumps: {bad_jumps[:5]}")
 
 
 if __name__ == "__main__":

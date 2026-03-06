@@ -32,6 +32,52 @@ SHIP_TYPE_TO_CODE = {
     "AirCarrier": "CV",
     "Submarine": "SS",
 }
+RIBBON_ID_TO_ASSET = {
+    0: "main_caliber",
+    1: "torpedo",
+    2: "bomb",
+    3: "plane",
+    4: "crit",
+    5: "frag",
+    6: "burn",
+    7: "flood",
+    8: "citadel",
+    9: "base_defense",
+    10: "base_capture",
+    11: "base_capture_assist",
+    12: "suppressed",
+    13: "secondary_caliber",
+    14: "main_caliber",
+    15: "main_caliber",
+    16: "main_caliber",
+    17: "main_caliber",
+    18: "building_kill",
+    19: "detected",
+    20: "bomb",
+    21: "bomb",
+    22: "bomb",
+    23: "bomb",
+    24: "rocket",
+    25: "rocket",
+    26: "rocket",
+    27: "splane",
+    28: "main_caliber",
+    29: "bomb",
+    30: "rocket",
+    31: "dbomb",
+    32: "acoustic_hit",
+    33: "drop",
+    34: "rocket",
+    35: "rocket",
+    39: "acoustic_hit",
+    40: "acoustic_hit",
+    41: "acoustic_hit",
+    43: "dbomb",
+    44: "dbomb",
+    45: "mine",
+    46: "demining_mine",
+    47: "demining_minefield",
+}
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -41,12 +87,19 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-@lru_cache(maxsize=32)
-def _load_font(size: int):
-    try:
-        return ImageFont.truetype("arial.ttf", size)
-    except Exception:
-        return ImageFont.load_default()
+@lru_cache(maxsize=64)
+def _load_font(size: int, bold: bool = False):
+    font_names = (
+        ["segoeuib.ttf", "segoeui.ttf", "arialbd.ttf", "arial.ttf"]
+        if bold
+        else ["segoeui.ttf", "segoeuib.ttf", "arial.ttf", "arialbd.ttf"]
+    )
+    for font_name in font_names:
+        try:
+            return ImageFont.truetype(font_name, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
 @lru_cache(maxsize=2048)
@@ -55,23 +108,26 @@ def _text_sprite(
     size: int,
     fill: Tuple[int, int, int],
     shadow: Tuple[int, int, int] | None = None,
+    bold: bool = False,
+    stroke_width: int = 0,
+    stroke_fill: Tuple[int, int, int] | None = None,
 ) -> Image.Image | None:
     if not text:
         return None
-    font = _load_font(size)
+    font = _load_font(size, bold=bold)
     probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
     probe_draw = ImageDraw.Draw(probe)
-    bbox = probe_draw.textbbox((0, 0), text, font=font)
+    bbox = probe_draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
     shadow_pad = 1 if shadow is not None else 0
-    width = max(1, (bbox[2] - bbox[0]) + shadow_pad + 1)
-    height = max(1, (bbox[3] - bbox[1]) + shadow_pad + 1)
+    width = max(1, (bbox[2] - bbox[0]) + shadow_pad + stroke_width + 1)
+    height = max(1, (bbox[3] - bbox[1]) + shadow_pad + stroke_width + 1)
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     ox = -bbox[0]
     oy = -bbox[1]
     if shadow is not None:
-        draw.text((ox + 1, oy + 1), text, fill=shadow, font=font)
-    draw.text((ox, oy), text, fill=fill, font=font)
+        draw.text((ox + 1, oy + 1), text, fill=shadow, font=font, stroke_width=stroke_width, stroke_fill=stroke_fill)
+    draw.text((ox, oy), text, fill=fill, font=font, stroke_width=stroke_width, stroke_fill=stroke_fill)
     return img
 
 
@@ -117,6 +173,73 @@ def _root_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _battle_hud_dir() -> Path:
+    return _root_dir() / "gui" / "battle_hud"
+
+
+def _ship_previews_dir() -> Path:
+    return _root_dir() / "gui" / "ship_previews"
+
+
+def _ship_icons_dir() -> Path:
+    return _root_dir() / "gui" / "ship_icons"
+
+
+def _ships_silhouettes_dir() -> Path:
+    return _root_dir() / "gui" / "ships_silhouettes"
+
+
+def _ship_dead_icons_dir() -> Path:
+    return _root_dir() / "gui" / "ship_dead_icons"
+
+
+@lru_cache(maxsize=1)
+def _load_gameparams_ship_meta() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    gameparams_path = _battle_hud_dir() / "GameParams.json"
+    try:
+        payload = json.loads(gameparams_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"by_id": {}, "by_index": {}, "by_name": {}}
+
+    by_id: Dict[str, Dict[str, Any]] = {}
+    by_index: Dict[str, Dict[str, Any]] = {}
+    by_name: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(payload, dict):
+        return {"by_id": by_id, "by_index": by_index, "by_name": by_name}
+
+    for value in payload.values():
+        if not isinstance(value, dict):
+            continue
+        typeinfo = value.get("typeinfo")
+        if not isinstance(typeinfo, dict) or str(typeinfo.get("type") or "") != "Ship":
+            continue
+        ship_id = _safe_int(value.get("id"))
+        ship_index = str(value.get("index") or "").strip()
+        ship_name = str(value.get("name") or "").strip()
+        if ship_id is None or not ship_index:
+            continue
+        meta = {
+            "id": ship_id,
+            "index": ship_index,
+            "name": ship_name,
+            "originShipName": str(value.get("originShipName") or "").strip(),
+            "species": str(typeinfo.get("species") or "").strip(),
+            "nation": str(typeinfo.get("nation") or "").strip(),
+        }
+        by_id[str(ship_id)] = meta
+        by_index[ship_index] = meta
+        if ship_name:
+            by_name[ship_name] = meta
+    return {"by_id": by_id, "by_index": by_index, "by_name": by_name}
+
+
+def _gameparams_ship_entry(ship_id: Any) -> Dict[str, Any]:
+    key = str(_safe_int(ship_id) or "")
+    if not key:
+        return {}
+    return _load_gameparams_ship_meta().get("by_id", {}).get(key, {})
+
+
 def _icon_cache_dir() -> Path:
     p = _root_dir() / "content" / "wg_ship_type_icons"
     p.mkdir(parents=True, exist_ok=True)
@@ -131,6 +254,12 @@ def _kill_icon_cache_dir() -> Path:
 
 def _map_cache_dir() -> Path:
     p = _root_dir() / "content" / "wg_map_icons"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _ship_preview_cache_dir() -> Path:
+    p = _root_dir() / "content" / "wg_ship_previews"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -190,12 +319,12 @@ def _load_map_icon(url: str) -> Image.Image | None:
 
 
 @lru_cache(maxsize=32)
-def _map_background_layer(url: str, canvas_size: int, margin: int) -> Image.Image | None:
+def _map_background_layer(url: str, map_size: int, margin: int) -> Image.Image | None:
     icon = _load_map_icon(url)
     if icon is None:
         return None
 
-    usable = canvas_size - 2 * margin
+    usable = map_size - 2 * margin
     if usable <= 0:
         return None
 
@@ -205,17 +334,19 @@ def _map_background_layer(url: str, canvas_size: int, margin: int) -> Image.Imag
     alpha = bg.getchannel("A").point(lambda a: min(165, a))
     bg.putalpha(alpha)
 
-    layer = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+    layer = Image.new("RGBA", (map_size, map_size), (0, 0, 0, 0))
     layer.paste(bg, (margin, margin), bg)
     return layer
 
 
-def _apply_map_background(img: Image.Image, canonical: Dict[str, Any], margin: int) -> Image.Image:
+def _apply_map_background(img: Image.Image, canonical: Dict[str, Any], margin: int, map_size: int, offset_x: int = 0) -> Image.Image:
     url = _map_icon_url(canonical)
-    layer = _map_background_layer(url, img.width, margin) if url else None
+    layer = _map_background_layer(url, map_size, margin) if url else None
     if layer is None:
         return img
-    return Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+    base = img.convert("RGBA")
+    base.alpha_composite(layer, (offset_x, 0))
+    return base.convert("RGB")
 
 
 @lru_cache(maxsize=1)
@@ -277,6 +408,305 @@ def _wg_tinted_icon(ship_type: str, color: Tuple[int, int, int], size: int) -> I
     tinted = Image.new("RGBA", icon.size, (color[0], color[1], color[2], 0))
     tinted.putalpha(alpha)
     return tinted
+
+
+def _normalize_vehicle_code(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    match = re.match(r"^[A-Za-z0-9]+", text)
+    if match:
+        return match.group(0).upper()
+    return text.split("_", 1)[0].split("-", 1)[0].strip().upper()
+
+
+def _player_vehicle_code(canonical: Dict[str, Any], ship_id: Any) -> str:
+    meta = canonical.get("meta", {}) or {}
+    player_vehicle = _normalize_vehicle_code(meta.get("playerVehicle"))
+    if player_vehicle:
+        return player_vehicle
+    ship_meta = _gameparams_ship_entry(ship_id)
+    return _normalize_vehicle_code(ship_meta.get("index"))
+
+
+def _neutral_ship_silhouette(image: Image.Image, tint: Tuple[int, int, int] = (230, 236, 242)) -> Image.Image | None:
+    try:
+        rgba = image.convert("RGBA")
+    except Exception:
+        return None
+    alpha = rgba.getchannel("A")
+    if alpha.getbbox() is None:
+        return None
+    if alpha.getextrema() == (255, 255):
+        return rgba
+    silhouette = Image.new("RGBA", rgba.size, (tint[0], tint[1], tint[2], 0))
+    silhouette.putalpha(alpha)
+    return silhouette
+
+
+def _ship_preview_candidates(vehicle_code: str, ship_id: Any) -> List[Path]:
+    candidates: List[Path] = []
+    if vehicle_code:
+        candidates.extend(
+            [
+                _ship_previews_dir() / f"{vehicle_code}.png",
+                _ship_previews_dir() / "medium" / f"{vehicle_code}.png",
+            ]
+        )
+    sid = _safe_int(ship_id)
+    if sid is not None and sid >= 0:
+        for key in ("contour", "medium", "large", "small"):
+            candidates.append(_ship_preview_cache_dir() / f"{sid}_{key}.png")
+    if vehicle_code:
+        candidates.extend(
+            [
+                _ship_preview_cache_dir() / f"{vehicle_code}.png",
+                _ship_preview_cache_dir() / "medium" / f"{vehicle_code}.png",
+            ]
+        )
+    return candidates
+
+
+@lru_cache(maxsize=128)
+def _load_ship_preview_base(ship_id: int, vehicle_code: str) -> Image.Image | None:
+    for path in _ship_preview_candidates(vehicle_code, ship_id):
+        if not path.exists():
+            continue
+        try:
+            if path.stat().st_size <= 0:
+                continue
+        except OSError:
+            continue
+        try:
+            preview = Image.open(path).convert("RGBA")
+        except Exception:
+            continue
+        path_norm = str(path).replace("\\", "/").lower()
+        if "/gui/ship_previews/" in path_norm:
+            return preview
+        normalized = _neutral_ship_silhouette(preview)
+        if normalized is not None:
+            return normalized
+        return preview
+
+    app_id, realm = _read_api_config()
+    if not app_id or ship_id < 0:
+        return None
+
+    params = urlencode({"application_id": app_id, "ship_id": ship_id, "fields": "images"})
+    url = f"{_base_url_for_realm(realm)}encyclopedia/ships/?{params}"
+    try:
+        payload = json.loads(_download_bytes(url).decode("utf-8"))
+    except Exception:
+        return None
+
+    data = payload.get("data", {})
+    if not isinstance(data, dict) or not data:
+        return None
+    ship_data = data.get(str(ship_id))
+    if not isinstance(ship_data, dict):
+        ship_data = next((v for v in data.values() if isinstance(v, dict)), {})
+    images = ship_data.get("images", {}) if isinstance(ship_data, dict) else {}
+    if not isinstance(images, dict):
+        return None
+
+    for key in ("contour", "medium", "large", "small"):
+        img_url = str(images.get(key) or "").strip()
+        if not img_url:
+            continue
+        file_path = _ship_preview_cache_dir() / f"{ship_id}_{key}.png"
+        try:
+            if not file_path.exists():
+                file_path.write_bytes(_download_bytes(img_url))
+            if file_path.stat().st_size <= 0:
+                continue
+            preview = Image.open(file_path).convert("RGBA")
+            normalized = _neutral_ship_silhouette(preview)
+            if normalized is not None:
+                return normalized
+            return preview
+        except Exception:
+            continue
+    return None
+
+
+@lru_cache(maxsize=256)
+def _load_ship_preview(ship_id: int, vehicle_code: str, max_w: int, max_h: int) -> Image.Image | None:
+    base = _load_ship_preview_base(ship_id, vehicle_code)
+    if base is None:
+        return None
+    target_w = max(1, int(max_w))
+    target_h = max(1, int(max_h))
+    ratio = min(target_w / max(1, base.width), target_h / max(1, base.height))
+    ratio = max(1e-6, ratio)
+    size = (
+        max(1, int(round(base.width * ratio))),
+        max(1, int(round(base.height * ratio))),
+    )
+    if size == base.size:
+        return base
+    return base.resize(size, Image.Resampling.LANCZOS)
+
+
+def _resize_fit(base: Image.Image, max_w: int, max_h: int) -> Image.Image:
+    target_w = max(1, int(max_w))
+    target_h = max(1, int(max_h))
+    ratio = min(target_w / max(1, base.width), target_h / max(1, base.height))
+    ratio = max(1e-6, ratio)
+    size = (
+        max(1, int(round(base.width * ratio))),
+        max(1, int(round(base.height * ratio))),
+    )
+    if size == base.size:
+        return base
+    return base.resize(size, Image.Resampling.LANCZOS)
+
+
+@lru_cache(maxsize=128)
+def _load_ship_alive_icon(vehicle_code: str, max_w: int, max_h: int) -> Image.Image | None:
+    vehicle_code = _normalize_vehicle_code(vehicle_code)
+    if not vehicle_code:
+        return None
+    candidates = [
+        _ship_icons_dir() / f"{vehicle_code}.png",
+        _ships_silhouettes_dir() / f"{vehicle_code}.png",
+        _ship_previews_dir() / f"{vehicle_code}.png",
+        _ship_previews_dir() / "medium" / f"{vehicle_code}.png",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if path.stat().st_size <= 0:
+                continue
+            return _resize_fit(Image.open(path).convert("RGBA"), max_w, max_h)
+        except Exception:
+            continue
+    return None
+
+
+@lru_cache(maxsize=128)
+def _load_ship_dead_icon(vehicle_code: str, max_w: int, max_h: int) -> Image.Image | None:
+    vehicle_code = _normalize_vehicle_code(vehicle_code)
+    if not vehicle_code:
+        return None
+    candidates = [_ship_dead_icons_dir() / f"{vehicle_code}.png"]
+    base = None
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            if path.stat().st_size <= 0:
+                continue
+            base = Image.open(path).convert("RGBA")
+            break
+        except Exception:
+            continue
+    if base is None:
+        return None
+    return _resize_fit(base, max_w, max_h)
+
+
+def _compose_ship_status_icon(
+    alive_icon: Image.Image | None,
+    dead_icon: Image.Image | None,
+    max_w: int,
+    max_h: int,
+    hp_ratio: float,
+    sunk: bool,
+) -> Image.Image | None:
+    hp_ratio = max(0.0, min(1.0, float(hp_ratio)))
+    if sunk:
+        return dead_icon or alive_icon
+    if alive_icon is None:
+        return dead_icon
+    if dead_icon is None:
+        return alive_icon
+
+    canvas_w = max(1, int(max_w))
+    canvas_h = max(1, int(max_h))
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+
+    dead_x = (canvas_w - dead_icon.width) // 2
+    dead_y = (canvas_h - dead_icon.height) // 2
+    canvas.paste(dead_icon, (dead_x, dead_y), dead_icon)
+
+    alive_x = (canvas_w - alive_icon.width) // 2
+    alive_y = (canvas_h - alive_icon.height) // 2
+    alive_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    alive_layer.paste(alive_icon, (alive_x, alive_y), alive_icon)
+
+    visible_w = max(0, min(alive_icon.width, int(round(alive_icon.width * hp_ratio))))
+    if visible_w <= 0:
+        return canvas
+
+    mask = Image.new("L", (canvas_w, canvas_h), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.rectangle(
+        [
+            alive_x,
+            alive_y,
+            alive_x + max(0, visible_w - 1),
+            alive_y + alive_icon.height - 1,
+        ],
+        fill=255,
+    )
+    canvas = Image.composite(alive_layer, canvas, mask)
+    return canvas
+
+
+@lru_cache(maxsize=1)
+def _gameparams_supported_ribbon_ids() -> frozenset[int]:
+    gameparams_path = _battle_hud_dir() / "GameParams.json"
+    try:
+        raw = gameparams_path.read_text(encoding="utf-8")
+    except Exception:
+        return frozenset(RIBBON_ID_TO_ASSET.keys())
+
+    ribbon_ids: set[int] = set()
+    for match in re.finditer(r'"(?:subRibbons|triggerRibbonsTypes)"\s*:\s*\[(.*?)\]', raw, flags=re.S):
+        for value in re.findall(r"-?\d+", match.group(1)):
+            try:
+                ribbon_ids.add(int(value))
+            except ValueError:
+                continue
+    if not ribbon_ids:
+        ribbon_ids.update(RIBBON_ID_TO_ASSET.keys())
+    return frozenset(ribbon_ids)
+
+
+@lru_cache(maxsize=1)
+def _ribbon_asset_roots() -> Tuple[str, ...]:
+    roots: List[str] = []
+    local_root = _root_dir() / "gui" / "ribbons"
+    if local_root.exists():
+        roots.append(str(local_root))
+    sub_root = local_root / "subribbons"
+    if sub_root.exists():
+        roots.append(str(sub_root))
+    return tuple(roots)
+
+
+@lru_cache(maxsize=128)
+def _load_ribbon_icon(ribbon_id: int, size: int) -> Image.Image | None:
+    rid = int(ribbon_id)
+    if rid not in _gameparams_supported_ribbon_ids():
+        return None
+    asset_name = RIBBON_ID_TO_ASSET.get(rid)
+    if not asset_name:
+        return None
+    for root in _ribbon_asset_roots():
+        file_path = Path(root) / f"ribbon_{asset_name}.png"
+        if not file_path.exists():
+            continue
+        try:
+            icon = Image.open(file_path).convert("RGBA")
+        except Exception:
+            continue
+        if size > 0 and icon.size != (size, size):
+            icon = icon.resize((size, size), Image.Resampling.LANCZOS)
+        return icon
+    return None
 
 
 def _world_half(canonical: Dict[str, Any]) -> float:
@@ -389,6 +819,62 @@ def _marker_name_text(value: Any, max_len: int = 14) -> str:
     return s[: max_len - 1] + "~"
 
 
+def _sidebar_width(map_size: int) -> int:
+    width = max(360, min(560, int(map_size * 0.48)))
+    if width % 2:
+        width += 1
+    return width
+
+
+def _split_lineups(render_tracks: Dict[str, Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    friendly = [v for v in render_tracks.values() if v.get("team_side") == "friendly"]
+    enemy = [v for v in render_tracks.values() if v.get("team_side") == "enemy"]
+    friendly.sort(key=lambda v: int(v.get("team_number_local") or 999))
+    enemy.sort(key=lambda v: int(v.get("team_number_local") or 999))
+    return friendly, enemy
+
+
+def _render_layout(render_tracks: Dict[str, Dict[str, Any]], map_size: int) -> Dict[str, Any]:
+    sidebar_w = _sidebar_width(map_size)
+    total_w = map_size + sidebar_w
+    pad = max(10, map_size // 90)
+    panel_w = sidebar_w - pad * 2
+    top_y = pad
+    font_size = max(11, map_size // 82)
+    line_h = max(15, font_size + 4)
+    header_h = max(22, font_size + 10)
+    friendly, enemy = _split_lineups(render_tracks)
+    lineup_rows = max(max(len(friendly), len(enemy)), 12)
+    lineup_h = header_h + lineup_rows * line_h + 8
+    player_h = max(120, min(190, int(map_size * 0.19)))
+    lineup_y = max(top_y + player_h + pad * 2 + 96, map_size - lineup_h - pad)
+    feed_y = top_y + player_h + pad
+    feed_bottom = max(feed_y + 96, lineup_y - pad)
+    feed_rect = (map_size + pad, feed_y, map_size + pad + panel_w, feed_bottom)
+    col_gap = pad
+    col_w = max(120, (panel_w - col_gap) // 2)
+    friendly_rect = (map_size + pad, lineup_y, map_size + pad + col_w, lineup_y + lineup_h)
+    enemy_rect = (friendly_rect[2] + col_gap, lineup_y, map_size + pad + panel_w, lineup_y + lineup_h)
+    return {
+        "map_size": map_size,
+        "width": total_w,
+        "height": map_size,
+        "sidebar_x": map_size,
+        "sidebar_width": sidebar_w,
+        "sidebar_pad": pad,
+        "panel_width": panel_w,
+        "font_size": font_size,
+        "line_h": line_h,
+        "header_h": header_h,
+        "friendly_items": friendly,
+        "enemy_items": enemy,
+        "player_rect": (map_size + pad, top_y, map_size + pad + panel_w, top_y + player_h),
+        "feed_rect": feed_rect,
+        "friendly_rect": friendly_rect,
+        "enemy_rect": enemy_rect,
+    }
+
+
 def _draw_polyline_with_gaps(
     draw: ImageDraw.ImageDraw,
     poly: List[Tuple[int, int]],
@@ -466,6 +952,230 @@ def _extract_kill_feed(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
     return kills
 
 
+def _extract_chat_feed(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("chat", [])
+    if not isinstance(raw, list):
+        return []
+    chat: List[Dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        message = str(row.get("message") or "").strip()
+        if not message:
+            continue
+        chat.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "sender": str(row.get("sender") or "").strip(),
+                "message": message,
+            }
+        )
+    chat.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return chat
+
+
+def _extract_health_timelines(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("health", [])
+    if not isinstance(raw, list):
+        return {}
+
+    timelines: Dict[str, Dict[str, Any]] = {}
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        t = float(row.get("time_s", 0.0) or 0.0)
+        entities = row.get("entities", {})
+        if not isinstance(entities, dict):
+            continue
+        for entity_key, state in entities.items():
+            if not isinstance(state, dict):
+                continue
+            key = str(entity_key)
+            timeline = timelines.setdefault(key, {"times": [], "hp": [], "alive": [], "max_hp": 0})
+            hp = max(0, _safe_int(state.get("hp")) or 0)
+            max_hp = max(0, _safe_int(state.get("max_hp")) or 0)
+            timeline["times"].append(t)
+            timeline["hp"].append(hp)
+            timeline["alive"].append(bool(state.get("alive", True)))
+            timeline["max_hp"] = max(int(timeline.get("max_hp", 0) or 0), max_hp)
+    return timelines
+
+
+def _health_state_at(health_timelines: Dict[str, Dict[str, Any]], entity_key: Any, t: float) -> Optional[Dict[str, Any]]:
+    timeline = health_timelines.get(str(entity_key))
+    if not isinstance(timeline, dict):
+        return None
+    times = timeline.get("times", [])
+    hp_values = timeline.get("hp", [])
+    alive_values = timeline.get("alive", [])
+    if not isinstance(times, list) or not times:
+        return None
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        idx = 0
+    idx = min(idx, len(times) - 1, len(hp_values) - 1, len(alive_values) - 1)
+    max_hp = max(0, int(timeline.get("max_hp", 0) or 0))
+    hp = max(0, int(hp_values[idx]))
+    ratio = float(hp) / float(max_hp) if max_hp > 0 else 0.0
+    return {
+        "hp": hp,
+        "max_hp": max_hp,
+        "alive": bool(alive_values[idx]),
+        "ratio": max(0.0, min(1.0, ratio)),
+    }
+
+
+def _extract_player_status_timeline(canonical: Dict[str, Any]) -> Dict[str, Any]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("player_status", [])
+    if not isinstance(raw, list):
+        raw = []
+
+    status = {
+        "times": [],
+        "damage_total": [],
+        "ribbons": [],
+        "player_name": str((canonical.get("meta", {}) or {}).get("playerName") or "").strip(),
+        "ship_entity_key": str((canonical.get("meta", {}) or {}).get("player_ship_entity_id") or ""),
+        "ship_id": _safe_int((canonical.get("meta", {}) or {}).get("player_ship_id")) or -1,
+        "team_id": _safe_int((canonical.get("meta", {}) or {}).get("local_team_id")) if _safe_int((canonical.get("meta", {}) or {}).get("local_team_id")) is not None else -1,
+        "max_health": 0,
+    }
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        ribbons_raw = row.get("ribbons", {})
+        ribbons: Dict[str, int] = {}
+        if isinstance(ribbons_raw, dict):
+            for ribbon_id, count in ribbons_raw.items():
+                rid = _safe_int(ribbon_id)
+                cnt = _safe_int(count)
+                if rid is None or cnt is None or cnt <= 0:
+                    continue
+                ribbons[str(rid)] = cnt
+        status["times"].append(float(row.get("time_s", 0.0) or 0.0))
+        status["damage_total"].append(float(row.get("damage_total", 0.0) or 0.0))
+        status["ribbons"].append(ribbons)
+        if str(row.get("player_name") or "").strip():
+            status["player_name"] = str(row.get("player_name") or "").strip()
+        ship_entity_key = str(row.get("ship_entity_key") or "").strip()
+        if ship_entity_key and ship_entity_key != "-1":
+            status["ship_entity_key"] = ship_entity_key
+        ship_id = _safe_int(row.get("ship_id"))
+        if ship_id is not None and ship_id >= 0:
+            status["ship_id"] = ship_id
+        team_id = _safe_int(row.get("team_id"))
+        if team_id is not None and team_id >= 0:
+            status["team_id"] = team_id
+        status["max_health"] = max(int(status.get("max_health", 0) or 0), max(0, _safe_int(row.get("max_health")) or 0))
+    return status
+
+
+def _player_status_at(status_timeline: Dict[str, Any], t: float) -> Dict[str, Any]:
+    times = status_timeline.get("times", [])
+    if not isinstance(times, list) or not times:
+        return {
+            "damage_total": 0.0,
+            "ribbons": {},
+            "player_name": str(status_timeline.get("player_name") or "").strip(),
+            "ship_entity_key": str(status_timeline.get("ship_entity_key") or ""),
+            "ship_id": _safe_int(status_timeline.get("ship_id")) or -1,
+            "team_id": _safe_int(status_timeline.get("team_id")) if _safe_int(status_timeline.get("team_id")) is not None else -1,
+            "max_health": max(0, _safe_int(status_timeline.get("max_health")) or 0),
+        }
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        idx = 0
+    idx = min(idx, len(times) - 1, len(status_timeline.get("damage_total", [])) - 1, len(status_timeline.get("ribbons", [])) - 1)
+    return {
+        "damage_total": float(status_timeline.get("damage_total", [0.0])[idx] or 0.0),
+        "ribbons": dict(status_timeline.get("ribbons", [{}])[idx] or {}),
+        "player_name": str(status_timeline.get("player_name") or "").strip(),
+        "ship_entity_key": str(status_timeline.get("ship_entity_key") or ""),
+        "ship_id": _safe_int(status_timeline.get("ship_id")) or -1,
+        "team_id": _safe_int(status_timeline.get("team_id")) if _safe_int(status_timeline.get("team_id")) is not None else -1,
+        "max_health": max(0, _safe_int(status_timeline.get("max_health")) or 0),
+    }
+
+
+def _feed_name_key(value: Any) -> str:
+    s = str(value or "").strip()
+    s = re.sub(r"^\[[^\]]+\]\s*", "", s)
+    return _norm_name(s)
+
+
+def _feed_name_color(team_side: str) -> Tuple[int, int, int]:
+    if team_side == "friendly":
+        return COLOR_FRIENDLY
+    if team_side == "enemy":
+        return COLOR_ENEMY
+    return (225, 225, 225)
+
+
+def _player_team_side(render_tracks: Dict[str, Dict[str, Any]], player_name: str) -> str:
+    target = _feed_name_key(player_name)
+    if not target:
+        return "unknown"
+    for track in render_tracks.values():
+        if _feed_name_key(track.get("player_name")) == target:
+            return str(track.get("team_side") or "unknown")
+    return "unknown"
+
+
+def _ship_state_at(track: Dict[str, Any], t: float) -> Optional[Dict[str, float]]:
+    points = list(track.get("points", []) or [])
+    if not points:
+        return None
+    times = [float(p.get("t", 0.0)) for p in points]
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        idx = 0
+    if idx >= len(points) - 1:
+        p = points[idx]
+        return {
+            "x": float(p.get("x", 0.0)),
+            "z": float(p.get("z", 0.0)),
+            "yaw": float(p.get("yaw", 0.0) or 0.0),
+        }
+    p0 = points[idx]
+    p1 = points[idx + 1]
+    t0 = float(p0.get("t", 0.0))
+    t1 = float(p1.get("t", t0))
+    if t1 <= t0:
+        ratio = 0.0
+    else:
+        ratio = max(0.0, min(1.0, (t - t0) / (t1 - t0)))
+    return {
+        "x": float(p0.get("x", 0.0)) + (float(p1.get("x", 0.0)) - float(p0.get("x", 0.0))) * ratio,
+        "z": float(p0.get("z", 0.0)) + (float(p1.get("z", 0.0)) - float(p0.get("z", 0.0))) * ratio,
+        "yaw": float(p0.get("yaw", 0.0) or 0.0),
+    }
+
+
+def _estimate_torpedo_speed(tracks: Dict[str, Dict[str, Any]]) -> float:
+    samples: List[float] = []
+    for track in tracks.values():
+        points = track.get("points", [])
+        if len(points) < 2:
+            continue
+        for p0, p1 in zip(points, points[1:5]):
+            t0 = float(p0.get("t", 0.0))
+            t1 = float(p1.get("t", t0))
+            if t1 <= t0:
+                continue
+            dist = math.hypot(float(p1.get("x", 0.0)) - float(p0.get("x", 0.0)), float(p1.get("z", 0.0)) - float(p0.get("z", 0.0)))
+            speed = dist / (t1 - t0)
+            if 1.0 <= speed <= 100.0:
+                samples.append(speed)
+                break
+    if not samples:
+        return 7.5
+    samples.sort()
+    return float(samples[len(samples) // 2])
+
+
 def _extract_torpedo_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     events = canonical.get("events", {}) or {}
     raw = events.get("torpedoes", [])
@@ -488,6 +1198,9 @@ def _extract_torpedo_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, An
                 "team_side": str(row.get("team_side") or "unknown"),
                 "points": [],
                 "times": [],
+                "dir": None,
+                "speed": None,
+                "predict_s": 0.0,
             },
         )
         t = float(row.get("time_s", 0.0) or 0.0)
@@ -509,6 +1222,47 @@ def _extract_torpedo_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, An
         track["points"] = deduped
         track["times"] = [float(p.get("t", 0.0)) for p in deduped]
 
+    default_speed = _estimate_torpedo_speed(tracks)
+    owner_tracks = canonical.get("tracks", {}) or {}
+    for track in tracks.values():
+        points = track.get("points", [])
+        if not points:
+            continue
+        direction: Tuple[float, float] | None = None
+        speed = default_speed
+        if len(points) >= 2:
+            p0 = points[0]
+            p1 = points[1]
+            dt = max(1e-3, float(p1.get("t", 0.0)) - float(p0.get("t", 0.0)))
+            dx = float(p1.get("x", 0.0)) - float(p0.get("x", 0.0))
+            dz = float(p1.get("z", 0.0)) - float(p0.get("z", 0.0))
+            dist = math.hypot(dx, dz)
+            if dist >= 1e-6:
+                direction = (dx / dist, dz / dist)
+                speed = dist / dt
+        if direction is None:
+            owner_track = owner_tracks.get(str(track.get("owner_entity_key") or ""))
+            if isinstance(owner_track, dict):
+                ship_state = _ship_state_at(owner_track, float(points[0].get("t", 0.0)))
+            else:
+                ship_state = None
+            if ship_state is not None:
+                dx = float(points[0].get("x", 0.0)) - float(ship_state.get("x", 0.0))
+                dz = float(points[0].get("z", 0.0)) - float(ship_state.get("z", 0.0))
+                dist = math.hypot(dx, dz)
+                if dist >= 0.2:
+                    direction = (dx / dist, dz / dist)
+                else:
+                    heading = _yaw_to_heading_deg(ship_state.get("yaw", 0.0))
+                    rad = math.radians(heading)
+                    direction = (math.sin(rad), math.cos(rad))
+        track["dir"] = direction
+        track["speed"] = float(speed if speed > 0.0 else default_speed)
+        if len(points) == 1:
+            track["predict_s"] = 22.0 if str(track.get("team_side")) == "friendly" else 14.0
+        else:
+            track["predict_s"] = 6.0
+
     return tracks
 
 
@@ -521,7 +1275,15 @@ def _torpedo_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 3
     if idx < 0:
         return None
     if idx >= len(points) - 1:
-        if t - float(times[-1]) > max_stale_s:
+        last_t = float(times[-1])
+        predict_s = float(track.get("predict_s", 0.0) or 0.0)
+        direction = track.get("dir")
+        speed = float(track.get("speed", 0.0) or 0.0)
+        if direction is not None and speed > 0.0 and (t - last_t) <= predict_s:
+            dx, dz = direction
+            dt = max(0.0, t - last_t)
+            return float(points[-1]["x"]) + dx * speed * dt, float(points[-1]["z"]) + dz * speed * dt
+        if t - last_t > max_stale_s:
             return None
         return float(points[-1]["x"]), float(points[-1]["z"])
 
@@ -532,6 +1294,13 @@ def _torpedo_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 3
     if t1 <= t0:
         return float(p0.get("x", 0.0)), float(p0.get("z", 0.0))
     if (t1 - t0) > max_gap_s:
+        direction = track.get("dir")
+        speed = float(track.get("speed", 0.0) or 0.0)
+        predict_s = float(track.get("predict_s", 0.0) or 0.0)
+        if direction is not None and speed > 0.0 and (t - t0) <= min(predict_s, t1 - t0):
+            dx, dz = direction
+            dt = max(0.0, t - t0)
+            return float(p0.get("x", 0.0)) + dx * speed * dt, float(p0.get("z", 0.0)) + dz * speed * dt
         if (t - t0) > max_stale_s:
             return None
         return float(p0.get("x", 0.0)), float(p0.get("z", 0.0))
@@ -545,12 +1314,20 @@ def _torpedo_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 3
 def _torpedo_direction_at(track: Dict[str, Any], t: float) -> Tuple[float, float] | None:
     points = track.get("points", [])
     times = track.get("times", [])
-    if len(points) < 2 or not times:
+    if not points or not times:
+        return None
+    if len(points) < 2:
+        direction = track.get("dir")
+        if isinstance(direction, tuple):
+            return float(direction[0]), float(direction[1])
         return None
     idx = bisect_right(times, t) - 1
     if idx < 0:
         return None
     if idx >= len(points) - 1:
+        direction = track.get("dir")
+        if isinstance(direction, tuple):
+            return float(direction[0]), float(direction[1])
         idx = len(points) - 2
     p0 = points[idx]
     p1 = points[idx + 1]
@@ -679,44 +1456,49 @@ def _kill_panel_style(entry: Dict[str, Any]) -> Tuple[Tuple[int, int, int], Tupl
 def _kill_icon_filename(entry: Dict[str, Any]) -> str:
     reason_code = _safe_int(entry.get("reason_code"))
     if reason_code in (1, 16, 17, 18, 19):
-        return "icon_main.png"
+        return "icon_frag_main_caliber.png"
     if reason_code == 2:
-        return "icon_atba.png"
+        return "icon_frag_atba.png"
     if reason_code in (3, 5, 11, 13):
-        return "icon_torpedo.png"
+        return "icon_frag_torpedo.png"
     if reason_code in (4, 28):
-        return "icon_bomb.png"
+        return "icon_frag_bomb.png"
     if reason_code == 6:
-        return "icon_burn.png"
+        return "icon_frag_burning.png"
     if reason_code == 9:
-        return "icon_flood.png"
+        return "icon_frag_flood.png"
     if reason_code == 14:
-        return "icon_rocket.png"
+        return "icon_frag_rocket.png"
     if reason_code == 22:
-        return "icon_skip.png"
+        return "icon_frag_skip.png"
 
     weapon_kind = str(entry.get("weapon_kind") or "other")
     if weapon_kind == "gun":
-        return "icon_main.png"
+        return "icon_frag_main_caliber.png"
     if weapon_kind == "torpedo":
-        return "icon_torpedo.png"
+        return "icon_frag_torpedo.png"
     if weapon_kind == "bomb":
-        return "icon_bomb.png"
-    return "icon_kill.png"
+        return "icon_frag_bomb.png"
+    return "frags.png"
 
 
 @lru_cache(maxsize=64)
 def _load_kill_icon(filename: str, size: int) -> Image.Image | None:
-    file_path = _kill_icon_cache_dir() / filename
-    if not file_path.exists():
-        return None
-    try:
-        icon = Image.open(file_path).convert("RGBA")
-    except Exception:
-        return None
-    if size > 0 and icon.size != (size, size):
-        icon = icon.resize((size, size), Image.Resampling.LANCZOS)
-    return icon
+    candidates = [
+        _battle_hud_dir() / "icon_frag" / filename,
+        _kill_icon_cache_dir() / filename,
+    ]
+    for file_path in candidates:
+        if not file_path.exists():
+            continue
+        try:
+            icon = Image.open(file_path).convert("RGBA")
+        except Exception:
+            continue
+        if size > 0 and icon.size != (size, size):
+            icon = icon.resize((size, size), Image.Resampling.LANCZOS)
+        return icon
+    return None
 
 
 def _draw_kill_feed_panel(
@@ -726,63 +1508,84 @@ def _draw_kill_feed_panel(
     render_tracks: Dict[str, Dict[str, Any]],
     kill_feed: List[Dict[str, Any]],
     t: float,
-    canvas_size: int,
+    layout: Dict[str, Any],
 ) -> None:
-    visible = [row for row in kill_feed if float(row.get("time_s", 0.0)) <= t + 1e-6]
-    if not visible:
+    chat_feed = _extract_chat_feed(canonical)
+    entity_sides = {str(key): str(track.get("team_side") or "unknown") for key, track in render_tracks.items()}
+    rows: List[Dict[str, Any]] = []
+    for row in kill_feed:
+        if float(row.get("time_s", 0.0)) <= t + 1e-6:
+            rows.append({"type": "kill", **row})
+    for row in chat_feed:
+        if float(row.get("time_s", 0.0)) <= t + 1e-6:
+            rows.append({"type": "chat", **row})
+    if not rows:
         return
 
-    font_size = 10
-    time_font_size = 9
-    icon_size = max(14, canvas_size // 42)
+    map_size = int(layout.get("map_size", 600))
+    font_size = max(10, int(layout.get("font_size", 10)))
+    time_font_size = max(9, font_size - 1)
+    icon_size = max(14, map_size // 42)
     line_h = max(16, icon_size + 2)
-    col_w = max(220, canvas_size // 3)
-    rows = max(
-        sum(1 for v in render_tracks.values() if v.get("team_side") == "friendly"),
-        sum(1 for v in render_tracks.values() if v.get("team_side") == "enemy"),
-        12,
-    )
-    lineup_panel_h = 20 + rows * 12 + 8
-    panel_x = canvas_size - col_w - 8
-    panel_y = 48 + lineup_panel_h + 10
-    available_rows = max(4, min(10, (canvas_size - panel_y - 20) // line_h))
-    visible = visible[-available_rows:]
-    panel_h = 20 + len(visible) * line_h + 8
+    panel_rect = tuple(layout.get("feed_rect", (0, 0, 0, 0)))
+    panel_x = int(panel_rect[0])
+    panel_y = int(panel_rect[1])
+    col_w = max(100, int(panel_rect[2]) - int(panel_rect[0]))
+    panel_h_max = max(60, int(panel_rect[3]) - int(panel_rect[1]))
+    available_rows = max(4, min(14, (panel_h_max - 28) // line_h))
+    rows.sort(key=lambda item: (float(item.get("time_s", 0.0)), 0 if str(item.get("type")) == "kill" else 1))
+    visible = rows[-available_rows:]
+    panel_h = min(panel_h_max, 20 + len(visible) * line_h + 8)
 
     draw.rectangle([panel_x, panel_y, panel_x + col_w, panel_y + panel_h], fill=None, outline=(100, 100, 100))
-    _paste_sprite(img, _text_sprite("Kill feed", font_size, (225, 225, 225)), panel_x + 6, panel_y + 4)
+    _paste_sprite(img, _text_sprite("Battle feed", font_size, (225, 225, 225), shadow=(0, 0, 0), bold=True, stroke_width=1, stroke_fill=(0, 0, 0)), panel_x + 6, panel_y + 4)
 
     y = panel_y + 20
     for entry in reversed(visible):
-        killer = _entity_name_for_feed(canonical, str(entry.get("killer_entity_key") or "-1"))
-        victim = _entity_name_for_feed(canonical, str(entry.get("victim_entity_key") or "-1"))
-        killer = _marker_name_text(killer, max_len=13)
-        victim = _marker_name_text(victim, max_len=13)
-        weapon_label = str(entry.get("weapon_label") or "KILL")
-        pill_fill, pill_text = _kill_panel_style(entry)
-
         mins, secs = divmod(int(float(entry.get("time_s", 0.0))), 60)
         stamp = f"{mins}:{secs:02d}"
-        stamp_sprite = _text_sprite(stamp, time_font_size, (165, 165, 165))
+        stamp_sprite = _text_sprite(stamp, time_font_size, (180, 180, 180), shadow=(0, 0, 0))
         _paste_sprite(img, stamp_sprite, panel_x + 6, y + 1)
 
         tx = panel_x + 42
-        killer_sprite = _text_sprite(killer, font_size, (235, 235, 235))
-        _paste_sprite(img, killer_sprite, tx, y)
-        icon_x = tx + (killer_sprite.width if killer_sprite is not None else 0) + 6
-        icon_y = y - 1
-        icon = _load_kill_icon(_kill_icon_filename(entry), icon_size)
-        if icon is not None:
-            img.paste(icon, (icon_x, icon_y), icon)
-            victim_x = icon_x + icon_size + 6
+        if str(entry.get("type")) == "chat":
+            sender_raw = str(entry.get("sender") or "").strip()
+            sender = _marker_name_text(sender_raw, max_len=14)
+            sender_side = _player_team_side(render_tracks, sender_raw)
+            sender_sprite = _text_sprite(sender or "chat", font_size + 1, _feed_name_color(sender_side), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+            _paste_sprite(img, sender_sprite, tx, y)
+            msg_x = tx + (sender_sprite.width if sender_sprite is not None else 0) + 6
+            message = str(entry.get("message") or "").strip()
+            if len(message) > 34:
+                message = message[:33] + "~"
+            msg_sprite = _text_sprite(f": {message}", time_font_size, (232, 232, 232), shadow=(0, 0, 0))
+            _paste_sprite(img, msg_sprite, msg_x, y + 1)
         else:
-            pill_sprite = _text_sprite(weapon_label, time_font_size, pill_text)
-            pill_w = (pill_sprite.width if pill_sprite is not None else 0) + 8
-            draw.rectangle([icon_x, y, icon_x + pill_w, y + 11], fill=pill_fill, outline=(20, 20, 20))
-            _paste_sprite(img, pill_sprite, icon_x + 4, y + 1)
-            victim_x = icon_x + pill_w + 6
-        victim_sprite = _text_sprite(victim, font_size, (235, 235, 235))
-        _paste_sprite(img, victim_sprite, victim_x, y)
+            killer = _entity_name_for_feed(canonical, str(entry.get("killer_entity_key") or "-1"))
+            victim = _entity_name_for_feed(canonical, str(entry.get("victim_entity_key") or "-1"))
+            killer = _marker_name_text(killer, max_len=13)
+            victim = _marker_name_text(victim, max_len=13)
+            weapon_label = str(entry.get("weapon_label") or "KILL")
+            pill_fill, pill_text = _kill_panel_style(entry)
+            killer_side = entity_sides.get(str(entry.get("killer_entity_key") or "-1"), _player_team_side(render_tracks, killer))
+            victim_side = entity_sides.get(str(entry.get("victim_entity_key") or "-1"), _player_team_side(render_tracks, victim))
+
+            killer_sprite = _text_sprite(killer, font_size + 1, _feed_name_color(killer_side), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+            _paste_sprite(img, killer_sprite, tx, y)
+            icon_x = tx + (killer_sprite.width if killer_sprite is not None else 0) + 6
+            icon_y = y - 1
+            icon = _load_kill_icon(_kill_icon_filename(entry), icon_size)
+            if icon is not None:
+                img.paste(icon, (icon_x, icon_y), icon)
+                victim_x = icon_x + icon_size + 6
+            else:
+                pill_sprite = _text_sprite(weapon_label, time_font_size, pill_text, bold=True)
+                pill_w = (pill_sprite.width if pill_sprite is not None else 0) + 8
+                draw.rectangle([icon_x, y, icon_x + pill_w, y + 11], fill=pill_fill, outline=(20, 20, 20))
+                _paste_sprite(img, pill_sprite, icon_x + 4, y + 1)
+                victim_x = icon_x + pill_w + 6
+            victim_sprite = _text_sprite(victim, font_size + 1, _feed_name_color(victim_side), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+            _paste_sprite(img, victim_sprite, victim_x, y)
         y += line_h
 
 
@@ -1185,70 +1988,252 @@ def _draw_ship_marker(
             img.paste(label, (tx, ty), label)
 
 
-def _draw_lineup_panel(draw: ImageDraw.ImageDraw, render_tracks: Dict[str, Dict[str, Any]], canvas_size: int) -> None:
-    friendly = [v for v in render_tracks.values() if v.get("team_side") == "friendly"]
-    enemy = [v for v in render_tracks.values() if v.get("team_side") == "enemy"]
-    friendly.sort(key=lambda v: int(v.get("team_number_local") or 999))
-    enemy.sort(key=lambda v: int(v.get("team_number_local") or 999))
+def _draw_hp_bar(
+    draw: ImageDraw.ImageDraw,
+    cx: int,
+    cy: int,
+    width: int,
+    height: int,
+    ratio: float,
+    color: Tuple[int, int, int],
+    sunk: bool = False,
+) -> None:
+    ratio = max(0.0, min(1.0, ratio))
+    left = cx - width // 2
+    top = cy
+    right = left + width
+    bottom = top + height
+    draw.rectangle([left, top, right, bottom], fill=(12, 12, 12), outline=(80, 80, 80))
+    if ratio <= 0.0:
+        return
+    fill_color = (135, 135, 135) if sunk else color
+    inner_left = left + 1
+    inner_top = top + 1
+    inner_bottom = bottom - 1
+    inner_right = inner_left + max(1, int((width - 2) * ratio))
+    draw.rectangle([inner_left, inner_top, inner_right, inner_bottom], fill=fill_color)
 
-    font = _load_font(10)
-    line_h = 12
-    col_w = max(220, canvas_size // 3)
-    rows = max(len(friendly), len(enemy), 12)
-    panel_h = 20 + rows * line_h + 8
-    left_x = 8
-    top_y = 48
-    right_x = canvas_size - col_w - 8
 
-    draw.rectangle([left_x, top_y, left_x + col_w, top_y + panel_h], fill=None, outline=(90, 120, 90))
-    draw.rectangle([right_x, top_y, right_x + col_w, top_y + panel_h], fill=None, outline=(130, 70, 70))
-    draw.text((left_x + 6, top_y + 4), "Friendly lineup", fill=COLOR_FRIENDLY, font=font)
-    draw.text((right_x + 6, top_y + 4), "Enemy lineup", fill=COLOR_ENEMY, font=font)
+def _entity_track_for_player(render_tracks: Dict[str, Dict[str, Any]], player_name: str, entity_key: str = "") -> tuple[str, Dict[str, Any]] | tuple[str, None]:
+    if entity_key and entity_key in render_tracks:
+        return entity_key, render_tracks[entity_key]
+    target = _feed_name_key(player_name)
+    if target:
+        for key, track in render_tracks.items():
+            if _feed_name_key(track.get("player_name")) == target:
+                return str(key), track
+    return "", None
 
-    def _line_text(item: Dict[str, Any]) -> str:
+
+def _draw_player_status_panel(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    canonical: Dict[str, Any],
+    render_tracks: Dict[str, Dict[str, Any]],
+    health_timelines: Dict[str, Dict[str, Any]],
+    player_status_timeline: Dict[str, Any],
+    t: float,
+    layout: Dict[str, Any],
+) -> None:
+    rect = tuple(layout.get("player_rect", (0, 0, 0, 0)))
+    if rect[2] <= rect[0] or rect[3] <= rect[1]:
+        return
+
+    status = _player_status_at(player_status_timeline, t)
+    player_name = str(status.get("player_name") or (canonical.get("meta", {}) or {}).get("playerName") or "").strip()
+    ship_entity_key, track = _entity_track_for_player(render_tracks, player_name, str(status.get("ship_entity_key") or ""))
+    ship_id = _safe_int(status.get("ship_id"))
+    if (ship_id is None or ship_id < 0) and isinstance(track, dict):
+        ship_id = _safe_int(track.get("ship_id"))
+    ship_id = ship_id if ship_id is not None else -1
+    ship_type = _ship_type(ship_id)
+    ship_code = _ship_class_code(ship_id)
+    ship_name = _ship_name(ship_id) or "Unknown ship"
+    vehicle_code = _player_vehicle_code(canonical, ship_id)
+    if ship_name == "Unknown ship":
+        raw_ship_name = str(_gameparams_ship_entry(ship_id).get("name") or "").strip()
+        if raw_ship_name:
+            ship_name = raw_ship_name.split("_", 1)[-1].replace("_", " ")
+    font_size = max(10, int(layout.get("font_size", 10)))
+    damage_font_size = max(font_size + 4, int(font_size * 1.5))
+    title_font_size = font_size + 1
+    x0, y0, x1, y1 = map(int, rect)
+
+    draw.rectangle(rect, fill=(6, 10, 14), outline=(95, 95, 95))
+    _paste_sprite(img, _text_sprite("Player ship", title_font_size, (225, 225, 225), shadow=(0, 0, 0), bold=True, stroke_width=1, stroke_fill=(0, 0, 0)), x0 + 8, y0 + 5)
+
+    damage_text = f"{int(round(float(status.get('damage_total', 0.0) or 0.0))):,} dmg"
+    damage_sprite = _text_sprite(damage_text, damage_font_size, (255, 230, 180), shadow=(0, 0, 0), bold=True, stroke_width=1, stroke_fill=(0, 0, 0))
+    if damage_sprite is not None:
+        _paste_sprite(img, damage_sprite, x1 - damage_sprite.width - 10, y0 + 28)
+
+    ribbons = dict(status.get("ribbons") or {})
+    badge_font = max(11, font_size + 1)
+    icon_size = max(34, int(font_size * 3.2))
+    ribbons_reserved_h = max(86, font_size + icon_size + 30)
+    ribbons_title_y = y1 - ribbons_reserved_h
+    preview_x = x0 + 10
+    preview_y = y0 + 28
+    preview_w = max(88, min(170, int((x1 - x0) * 0.34)))
+    preview_h = max(50, ribbons_title_y - preview_y - 8)
+    preview_rect = (preview_x, preview_y, preview_x + preview_w, preview_y + preview_h)
+    draw.rounded_rectangle(preview_rect, radius=8, fill=(12, 16, 22), outline=(50, 60, 72))
+    health = _health_state_at(health_timelines, ship_entity_key, t) if ship_entity_key else None
+    player_sunk = health is not None and not bool(health.get("alive", True))
+    hp_ratio = float(health.get("ratio", 1.0) or 1.0) if health is not None else 1.0
+    alive_icon = _load_ship_alive_icon(vehicle_code, preview_w - 12, preview_h - 12)
+    dead_icon = _load_ship_dead_icon(vehicle_code, preview_w - 12, preview_h - 12)
+    preview = _compose_ship_status_icon(alive_icon, dead_icon, preview_w - 12, preview_h - 12, hp_ratio, player_sunk)
+    if preview is None and not player_sunk:
+        preview = _load_ship_preview(ship_id, vehicle_code, preview_w - 12, preview_h - 12)
+    if preview is not None:
+        px = preview_x + (preview_w - preview.width) // 2
+        py = preview_y + (preview_h - preview.height) // 2
+        img.paste(preview, (px, py), preview)
+    else:
+        fallback_color = (160, 160, 160) if player_sunk else (224, 232, 240)
+        fallback_icon = _wg_tinted_icon(ship_type, fallback_color, max(14, min(preview_w, preview_h) // 2))
+        if fallback_icon is not None:
+            px = preview_x + (preview_w - fallback_icon.width) // 2
+            py = preview_y + (preview_h - fallback_icon.height) // 2
+            img.paste(fallback_icon, (px, py), fallback_icon)
+        else:
+            local = ImageDraw.Draw(img)
+            _draw_ship_icon(local, preview_x + preview_w // 2, preview_y + preview_h // 2, ship_code, fallback_color, (220, 220, 220), size=max(10, min(preview_w, preview_h) // 4))
+
+    text_x = preview_rect[2] + 12
+    info_y = y0 + 28
+    line_gap = max(16, font_size + 4)
+    _paste_sprite(img, _text_sprite(player_name or "Player", title_font_size + 1, COLOR_FRIENDLY, shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0)), text_x, info_y)
+    _paste_sprite(img, _text_sprite(ship_name, font_size + 1, (235, 235, 235), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0)), text_x, info_y + line_gap)
+    details = ship_code if ship_name != "Unknown ship" else (ship_code if not vehicle_code else f"{ship_code}  {vehicle_code}")
+    _paste_sprite(img, _text_sprite(details, font_size, (180, 180, 180), shadow=(0, 0, 0)), text_x, info_y + line_gap * 2)
+
+    if health is not None:
+        hp_ratio = max(0.0, min(1.0, float(health.get("ratio", 0.0) or 0.0)))
+        hp_pct = int(round(hp_ratio * 100.0))
+        hp_text = f"HP {int(health['hp']):,} / {int(health['max_hp']):,}  {hp_pct}%"
+        hp_color = COLOR_FRIENDLY if bool(health.get("alive", True)) else (165, 165, 165)
+        _paste_sprite(img, _text_sprite(hp_text, font_size, hp_color, shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0)), text_x, info_y + line_gap * 3)
+
+    _paste_sprite(img, _text_sprite("Ribbons", font_size, (205, 205, 205), shadow=(0, 0, 0), bold=True), x0 + 10, ribbons_title_y)
+    badge_x = x0 + 10
+    badge_y = ribbons_title_y + font_size + 5
+    badge_max_x = x1 - 10
+    supported_ribbons = _gameparams_supported_ribbon_ids()
+    items = sorted(
+        (
+            (ribbon_id, count)
+            for ribbon_id, count in ribbons.items()
+            if (_safe_int(ribbon_id) is not None and int(ribbon_id) in supported_ribbons)
+        ),
+        key=lambda item: (-int(item[1]), int(item[0])),
+    )
+    hidden = 0
+    for ribbon_id, count in items:
+        rid = _safe_int(ribbon_id)
+        icon = _load_ribbon_icon(rid or -1, icon_size) if rid is not None else None
+        count_sprite = _text_sprite(f"x{int(count)}", badge_font, (242, 242, 255), shadow=(0, 0, 0), bold=True)
+        has_icon = icon is not None and count_sprite is not None
+        if has_icon:
+            badge_w = icon.width + 8 + count_sprite.width + 14
+            badge_h = max(icon.height, count_sprite.height) + 6
+        else:
+            fallback = _text_sprite(f"R{int(ribbon_id)} x{int(count)}", badge_font, (242, 242, 255), shadow=None, bold=True)
+            if fallback is None:
+                continue
+            icon = fallback
+            count_sprite = None
+            badge_w = fallback.width + 14
+            badge_h = fallback.height + 6
+        if badge_x + badge_w > badge_max_x:
+            badge_x = x0 + 10
+            badge_y += badge_h + 4
+        if badge_y + badge_h > y1 - 6:
+            hidden += 1
+            continue
+        draw.rounded_rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], radius=6, fill=(16, 24, 34), outline=(75, 90, 108))
+        if has_icon:
+            _paste_sprite(img, icon, badge_x + 6, badge_y + (badge_h - icon.height) // 2)
+            _paste_sprite(img, count_sprite, badge_x + 6 + icon.width + 8, badge_y + (badge_h - count_sprite.height) // 2)
+        else:
+            _paste_sprite(img, icon, badge_x + 7, badge_y + 2)
+        badge_x += badge_w + 6
+    if hidden > 0:
+        more_sprite = _text_sprite(f"+{hidden} more", badge_font, (180, 180, 180), shadow=(0, 0, 0))
+        _paste_sprite(img, more_sprite, x1 - (more_sprite.width if more_sprite is not None else 0) - 10, y1 - (more_sprite.height if more_sprite is not None else 0) - 6)
+
+
+def _draw_lineup_panel(img: Image.Image, draw: ImageDraw.ImageDraw, layout: Dict[str, Any]) -> None:
+    friendly = list(layout.get("friendly_items", []))
+    enemy = list(layout.get("enemy_items", []))
+    line_h = int(layout.get("line_h", 12))
+    header_h = int(layout.get("header_h", 20))
+    font_size = int(layout.get("font_size", 10))
+    friendly_rect = tuple(layout.get("friendly_rect", (0, 0, 0, 0)))
+    enemy_rect = tuple(layout.get("enemy_rect", (0, 0, 0, 0)))
+
+    draw.rectangle(friendly_rect, fill=None, outline=(90, 120, 90))
+    draw.rectangle(enemy_rect, fill=None, outline=(130, 70, 70))
+    _paste_sprite(img, _text_sprite("Friendly lineup", font_size, COLOR_FRIENDLY, shadow=(0, 0, 0), bold=True, stroke_width=1, stroke_fill=(0, 0, 0)), int(friendly_rect[0]) + 6, int(friendly_rect[1]) + 4)
+    _paste_sprite(img, _text_sprite("Enemy lineup", font_size, COLOR_ENEMY, shadow=(0, 0, 0), bold=True, stroke_width=1, stroke_fill=(0, 0, 0)), int(enemy_rect[0]) + 6, int(enemy_rect[1]) + 4)
+
+    def _line_text(item: Dict[str, Any], rect: Tuple[Any, Any, Any, Any]) -> str:
         num = _lineup_number_text(item.get("team_number_local"))
         ship_code = _ship_class_code(item.get("ship_id"))
-        name = str(item.get("player_name") or "unknown")
+        rect_w = max(120, int(rect[2]) - int(rect[0]))
+        max_len = max(8, min(20, (rect_w - 44) // max(6, font_size)))
+        name = _marker_name_text(item.get("player_name"), max_len=max_len)
         return f"{num:>2} {ship_code} {name}"
 
+    rows = max(len(friendly), len(enemy), 12)
     for i in range(rows):
-        y = top_y + 20 + i * line_h
+        y_f = int(friendly_rect[1]) + header_h + i * line_h
+        y_e = int(enemy_rect[1]) + header_h + i * line_h
         if i < len(friendly):
-            draw.text((left_x + 6, y), _line_text(friendly[i]), fill=(220, 235, 220), font=font)
+            row_sprite = _text_sprite(_line_text(friendly[i], friendly_rect), font_size + 1, (225, 240, 225), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+            _paste_sprite(img, row_sprite, int(friendly_rect[0]) + 6, y_f)
         if i < len(enemy):
-            draw.text((right_x + 6, y), _line_text(enemy[i]), fill=(235, 220, 220), font=font)
+            row_sprite = _text_sprite(_line_text(enemy[i], enemy_rect), font_size + 1, (240, 225, 225), shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0))
+            _paste_sprite(img, row_sprite, int(enemy_rect[0]) + 6, y_e)
 
 
 def _build_frame_base(
     canonical: Dict[str, Any],
-    render_tracks: Dict[str, Dict[str, Any]],
-    canvas_size: int,
+    layout: Dict[str, Any],
     margin: int,
     show_grid: bool,
     header_font_size: int,
     bg_color: Tuple[int, int, int] = COLOR_BG,
 ) -> Image.Image:
-    img = Image.new("RGB", (canvas_size, canvas_size), bg_color)
-    img = _apply_map_background(img, canonical, margin)
+    map_size = int(layout.get("map_size", 600))
+    canvas_w = int(layout.get("width", map_size))
+    canvas_h = int(layout.get("height", map_size))
+    sidebar_x = int(layout.get("sidebar_x", map_size))
+    img = Image.new("RGB", (canvas_w, canvas_h), bg_color)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([sidebar_x, 0, canvas_w, canvas_h], fill=(0, 0, 0))
+    draw.line([(sidebar_x, 0), (sidebar_x, canvas_h)], fill=(40, 40, 40), width=2)
+    img = _apply_map_background(img, canonical, margin, map_size)
     draw = ImageDraw.Draw(img)
 
     if show_grid:
-        grid_steps = 9 if canvas_size >= 800 else 7
+        grid_steps = 9 if map_size >= 800 else 7
         grid_divisor = max(1, grid_steps - 1)
         for i in range(grid_steps):
-            x = margin + i * (canvas_size - 2 * margin) // grid_divisor
-            draw.line([(x, margin), (x, canvas_size - margin)], fill=(35, 55, 85), width=1)
-            draw.line([(margin, x), (canvas_size - margin, x)], fill=(35, 55, 85), width=1)
-        if canvas_size >= 800:
-            draw.rectangle([margin, margin, canvas_size - margin, canvas_size - margin], outline=(60, 90, 130), width=2)
+            x = margin + i * (map_size - 2 * margin) // grid_divisor
+            draw.line([(x, margin), (x, map_size - margin)], fill=(35, 55, 85), width=1)
+            draw.line([(margin, x), (map_size - margin, x)], fill=(35, 55, 85), width=1)
+        if map_size >= 800:
+            draw.rectangle([margin, margin, map_size - margin, map_size - margin], outline=(60, 90, 130), width=2)
 
-    friendly_total = sum(1 for tr in render_tracks.values() if tr.get("team_side") == "friendly")
-    enemy_total = sum(1 for tr in render_tracks.values() if tr.get("team_side") == "enemy")
+    friendly_total = len(layout.get("friendly_items", []))
+    enemy_total = len(layout.get("enemy_items", []))
     count_sprite = _text_sprite(f"friendly {friendly_total} | enemy {enemy_total}", header_font_size, (220, 220, 220))
     title_sprite = _text_sprite(_map_title(canonical), header_font_size, (220, 220, 220))
     _paste_sprite(img, count_sprite, 10, 10)
     _paste_sprite(img, title_sprite, 10, 10 + max(16, header_font_size + 5))
-    _draw_lineup_panel(draw, render_tracks, canvas_size)
+    _draw_lineup_panel(img, draw, layout)
     return img
 
 
@@ -1654,14 +2639,25 @@ def _stable_heading_deg(points: List[Dict[str, Any]], previous: float | None = N
     return _lerp_angle_deg(previous, raw, 0.55)
 
 
+def _clamp_track_to_time(points: List[Dict[str, Any]], t_limit: float) -> List[Dict[str, Any]]:
+    if not points:
+        return []
+    out = [p for p in points if float(p.get("t", 0.0)) <= t_limit + 1e-6]
+    if out:
+        return out
+    return [points[0]]
+
+
 def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_labels: bool = True, show_grid: bool = True, bg_color: Tuple[int, int, int] = COLOR_BG) -> Image.Image:
-    img = Image.new("RGB", (canvas_size, canvas_size), bg_color)
     font = _load_font(12)
     half = _world_half(canonical)
     margin = 40
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
-    img = _build_frame_base(canonical, render_tracks, canvas_size, margin, show_grid, 12, bg_color=bg_color)
+    health_timelines = _extract_health_timelines(canonical)
+    player_status_timeline = _extract_player_status_timeline(canonical)
+    layout = _render_layout(render_tracks, canvas_size)
+    img = _build_frame_base(canonical, layout, margin, show_grid, 12, bg_color=bg_color)
     draw = ImageDraw.Draw(img)
     battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if battle_end <= 0:
@@ -1678,19 +2674,20 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     ordered = sorted(render_tracks.items(), key=lambda kv: kv[1].get("team_side", "unknown"))
     bucket_counts: Dict[Tuple[int, int], int] = {}
     for entity_key, track in ordered:
-        pts = track.get("points", [])
+        pts = list(track.get("points", []) or [])
         if not pts:
             continue
         ship_type = _ship_type(track.get("ship_id"))
         ship_class = _ship_class_code(track.get("ship_id"))
         death_t = death_times.get(str(entity_key))
         sunk = death_t is not None and battle_end >= death_t
-        last_t = float(pts[-1].get("t", 0.0))
-        heading_deg = _stable_heading_deg(pts, previous=None)
+        render_pts = _clamp_track_to_time(pts, float(death_t)) if sunk and death_t is not None else pts
+        last_t = float(render_pts[-1].get("t", 0.0))
+        heading_deg = _stable_heading_deg(render_pts, previous=None)
         spotted = (battle_end - last_t) <= spot_timeout and not bool(track.get("always_unspotted", False))
-        ever_spotted = (not bool(track.get("always_unspotted", False))) and bool(pts)
+        ever_spotted = (not bool(track.get("always_unspotted", False))) and bool(render_pts)
         color = _status_color(_color_side(track), spotted=spotted, sunk=sunk, ever_spotted=ever_spotted)
-        poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin) for p in pts]
+        poly = [_to_px(float(p.get("x", 0.0)), float(p.get("z", 0.0)), half, canvas_size, margin) for p in render_pts]
         if len(poly) >= 2:
             trail_color = tuple(max(0, c // 2) for c in color)
             _draw_polyline_with_gaps(draw, poly[-70:], trail_color, width=2, max_jump_px=34)
@@ -1715,6 +2712,9 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             size=8,
             sunk=sunk,
         )
+        health = _health_state_at(health_timelines, entity_key, float(death_t) if sunk and death_t is not None else battle_end)
+        if health is not None:
+            _draw_hp_bar(draw, ex, ey + 13, 28, 5, float(health.get("ratio", 0.0)), color, sunk=sunk or (not bool(health.get("alive", True))))
 
         if show_labels:
             player_name = track.get("player_name") or f"entity_{entity_key}"
@@ -1730,7 +2730,8 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     duration_sprite = _text_sprite(f"duration={duration}s tracked={len(render_tracks)}", 12, (220, 220, 220))
     _paste_sprite(img, duration_sprite, 10, canvas_size - 22)
     _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
-    _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, canvas_size)
+    _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, battle_end, layout)
+    _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, layout)
     return img
 
 
@@ -1739,6 +2740,9 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     margin = 40
     death_times = _find_death_times(canonical)
     render_tracks = _normalize_render_tracks(canonical)
+    health_timelines = _extract_health_timelines(canonical)
+    player_status_timeline = _extract_player_status_timeline(canonical)
+    layout = _render_layout(render_tracks, canvas_size)
     prepared_tracks = _prepare_track_render_data(render_tracks, half, canvas_size, margin)
     max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
     if max_clock <= 0:
@@ -1753,7 +2757,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     ui_font_size = max(11, canvas_size // 56)
     marker_size = max(6, canvas_size // 96)
     clock_x = canvas_size - max(80, ui_font_size * 7)
-    base_frame = _build_frame_base(canonical, render_tracks, canvas_size, margin, show_grid, ui_font_size)
+    base_frame = _build_frame_base(canonical, layout, margin, show_grid, ui_font_size)
 
     t = 0.0
     while t <= max_clock + speed:
@@ -1783,14 +2787,20 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 # Show known participants from t=0 using first known position as unspotted placeholder.
                 idx = 0
                 synthetic_start = True
+            death_t = death_times.get(str(entity_key))
+            sunk = death_t is not None and t >= death_t
+            if sunk and death_t is not None:
+                idx = max(0, bisect_right(times, float(death_t)) - 1)
+                synthetic_start = False
             points = all_points[max(0, idx - 9) : idx + 1]
             last_t = times[idx]
             prev_heading = heading_memory.get(str(entity_key))
-            heading_deg = _stable_heading_deg(points, previous=prev_heading, max_step_deg=32.0)
+            if sunk and prev_heading is not None:
+                heading_deg = prev_heading
+            else:
+                heading_deg = _stable_heading_deg(points, previous=prev_heading, max_step_deg=32.0)
             heading_memory[str(entity_key)] = heading_deg
             spotted = (t - last_t) <= spot_timeout and not synthetic_start and not bool(track.get("always_unspotted", False))
-            death_t = death_times.get(str(entity_key))
-            sunk = death_t is not None and t >= death_t
             if spotted:
                 ever_spotted_memory[ekey] = True
             ever_spotted = ever_spotted_memory.get(ekey, False)
@@ -1825,11 +2835,24 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 size=marker_size,
                 sunk=sunk,
             )
+            health = _health_state_at(health_timelines, entity_key, float(death_t) if sunk and death_t is not None else t)
+            if health is not None:
+                _draw_hp_bar(
+                    draw,
+                    cx,
+                    cy + marker_size + 5,
+                    max(20, marker_size * 4),
+                    max(4, marker_size // 2),
+                    float(health.get("ratio", 0.0)),
+                    color,
+                    sunk=sunk or (not bool(health.get("alive", True))),
+                )
 
         mins, secs = divmod(int(t), 60)
         _paste_sprite(img, _text_sprite(f"{mins}:{secs:02d}", ui_font_size, (220, 220, 220)), clock_x, 10)
         _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
-        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, canvas_size)
+        _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t, layout)
+        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, layout)
         yield img
         t += max(1, speed)
 

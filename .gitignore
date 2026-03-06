@@ -7,6 +7,7 @@ __pycache__
 # ignore outputs
 GameParam*.json
 *.json
+!bot_config.json.example
 
 split
 content/
@@ -19,6 +20,7 @@ crashes/
 # environment
 .env/
 game.path
+bot_config.json
 
 # pyinstaller
 dist/

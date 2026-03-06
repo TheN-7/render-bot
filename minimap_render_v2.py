@@ -12,6 +12,8 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
 from core.minimap_data import load_canonical_data, canonical_to_legacy
 from renderers.minimap_renderer import iter_animation_frames, render_static, render_gif_frames
@@ -104,6 +106,85 @@ def _save_mp4(frames, out_mp4: str, fps: int) -> None:
         raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg MP4 export failed")
 
 
+def render_minimap(
+    replay_path: str,
+    *,
+    out_mp4: str | None = None,
+    out_png: str | None = None,
+    out_gif: str | None = None,
+    dump_json: str | None = None,
+    dump_legacy_json: str | None = None,
+    size: int = 1024,
+    fps: int = 12,
+    speed: int = 3,
+    show_labels: bool = True,
+    show_grid: bool = True,
+    bg_color: Tuple[int, int, int] = (10, 20, 40),
+) -> Dict[str, Any]:
+    src = Path(replay_path)
+    if not src.is_file():
+        raise FileNotFoundError(f"file not found: {replay_path}")
+
+    canonical = load_canonical_data(str(src))
+
+    if dump_json:
+        with open(dump_json, "w", encoding="utf-8") as f:
+            json.dump(canonical, f, indent=2)
+
+    if dump_legacy_json:
+        legacy = canonical_to_legacy(canonical)
+        with open(dump_legacy_json, "w", encoding="utf-8") as f:
+            json.dump(legacy, f, indent=2)
+
+    base = os.path.splitext(str(src))[0]
+    mp4_path = out_mp4 or (base + "_minimap.mp4")
+
+    mp4_frames = iter_animation_frames(
+        canonical,
+        canvas_size=size,
+        speed=speed,
+        show_grid=show_grid,
+    )
+    _save_mp4(mp4_frames, mp4_path, fps)
+
+    if out_png:
+        img = render_static(
+            canonical,
+            canvas_size=size,
+            show_labels=show_labels,
+            show_grid=show_grid,
+            bg_color=bg_color,
+        )
+        img.save(out_png, dpi=(150, 150))
+
+    if out_gif:
+        gif_size = min(size, 720)
+        frames = render_gif_frames(
+            canonical,
+            canvas_size=gif_size,
+            speed=speed,
+            show_grid=show_grid,
+        )
+        frame_ms = int(1000 / max(1, fps))
+        frames[0].save(
+            out_gif,
+            save_all=True,
+            append_images=frames[1:],
+            duration=frame_ms,
+            loop=0,
+            optimize=False,
+        )
+
+    return {
+        "canonical": canonical,
+        "out_mp4": mp4_path,
+        "out_png": out_png,
+        "out_gif": out_gif,
+        "dump_json": dump_json,
+        "dump_legacy_json": dump_legacy_json,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render a minimap from a .wowsreplay or canonical .json file")
     parser.add_argument("replay", help="Input .wowsreplay or canonical .json")
@@ -120,64 +201,31 @@ def main() -> None:
     parser.add_argument("--bg-color", default="10,20,40", help="Background RGB (default: 10,20,40)")
     args = parser.parse_args()
 
-    if not os.path.isfile(args.replay):
-        print(f"ERROR: file not found: {args.replay}")
-        sys.exit(1)
-
-    canonical = load_canonical_data(args.replay)
-
-    if args.dump_json:
-        with open(args.dump_json, "w", encoding="utf-8") as f:
-            json.dump(canonical, f, indent=2)
-
-    if args.dump_legacy_json:
-        legacy = canonical_to_legacy(canonical)
-        with open(args.dump_legacy_json, "w", encoding="utf-8") as f:
-            json.dump(legacy, f, indent=2)
-
-    base = os.path.splitext(args.replay)[0]
-    out_mp4 = args.out or (base + "_minimap.mp4")
-    out_png = args.png
     bg = tuple(int(v) for v in args.bg_color.split(","))
-
-    mp4_frames = iter_animation_frames(
-        canonical,
-        canvas_size=args.size,
-        speed=args.speed,
-        show_grid=not args.no_grid,
-    )
-    _save_mp4(mp4_frames, out_mp4, args.fps)
-    print(f"Saved MP4: {out_mp4}")
-
-    if out_png:
-        img = render_static(
-            canonical,
-            canvas_size=args.size,
+    try:
+        result = render_minimap(
+            args.replay,
+            out_mp4=args.out,
+            out_png=args.png,
+            out_gif=args.gif,
+            dump_json=args.dump_json,
+            dump_legacy_json=args.dump_legacy_json,
+            size=args.size,
+            fps=args.fps,
+            speed=args.speed,
             show_labels=not args.no_labels,
             show_grid=not args.no_grid,
             bg_color=bg,
         )
-        img.save(out_png, dpi=(150, 150))
-        print(f"Saved PNG: {out_png}")
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
 
-    if args.gif:
-        gif_size = min(args.size, 720)
-        frames = render_gif_frames(
-            canonical,
-            canvas_size=gif_size,
-            speed=args.speed,
-            show_grid=not args.no_grid,
-        )
-        frame_ms = int(1000 / max(1, args.fps))
-        frames[0].save(
-            args.gif,
-            save_all=True,
-            append_images=frames[1:],
-            duration=frame_ms,
-            loop=0,
-            optimize=False,
-        )
-        print(f"Saved GIF: {args.gif}")
+    print(f"Saved MP4: {result['out_mp4']}")
+    if result["out_png"]:
+        print(f"Saved PNG: {result['out_png']}")
+    if result["out_gif"]:
+        print(f"Saved GIF: {result['out_gif']}")
 
 
 if __name__ == "__main__":

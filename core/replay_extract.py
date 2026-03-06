@@ -193,6 +193,90 @@ def _normalize_kill_feed(raw_kills: Any) -> list[Dict[str, Any]]:
     return kills
 
 
+def _normalize_chat_feed(raw_chat: Any) -> list[Dict[str, Any]]:
+    if not isinstance(raw_chat, list):
+        return []
+    chat: list[Dict[str, Any]] = []
+    for row in raw_chat:
+        if not isinstance(row, dict):
+            continue
+        message = str(row.get("message") or "").strip()
+        if not message:
+            continue
+        chat.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "sender": str(row.get("sender") or "").strip(),
+                "message": message,
+            }
+        )
+    chat.sort(key=lambda item: (float(item.get("time_s", 0.0)), str(item.get("sender", ""))))
+    return chat
+
+
+def _normalize_health_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
+    if not isinstance(raw_timeline, list):
+        return []
+    timeline: list[Dict[str, Any]] = []
+    for row in raw_timeline:
+        if not isinstance(row, dict):
+            continue
+        entities_raw = row.get("entities", {})
+        entities: Dict[str, Dict[str, Any]] = {}
+        if isinstance(entities_raw, dict):
+            for entity_key, state in entities_raw.items():
+                if not isinstance(state, dict):
+                    continue
+                entities[str(entity_key)] = {
+                    "hp": max(0, _safe_int(state.get("hp")) or 0),
+                    "max_hp": max(0, _safe_int(state.get("max_hp")) or 0),
+                    "alive": bool(state.get("alive", True)),
+                }
+        if not entities:
+            continue
+        timeline.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "entities": entities,
+            }
+        )
+    timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return timeline
+
+
+def _normalize_player_status_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
+    if not isinstance(raw_timeline, list):
+        return []
+    timeline: list[Dict[str, Any]] = []
+    for row in raw_timeline:
+        if not isinstance(row, dict):
+            continue
+        ribbons_raw = row.get("ribbons", {})
+        ribbons: Dict[str, int] = {}
+        if isinstance(ribbons_raw, dict):
+            for ribbon_id, count in ribbons_raw.items():
+                rid = _safe_int(ribbon_id)
+                cnt = _safe_int(count)
+                if rid is None or cnt is None or cnt <= 0:
+                    continue
+                ribbons[str(rid)] = cnt
+        timeline.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "avatar_entity_id": _safe_int(row.get("avatar_entity_id")) or -1,
+                "ship_entity_key": str(_safe_int(row.get("ship_entity_id")) or -1),
+                "ship_id": _safe_int(row.get("ship_params_id")) or -1,
+                "team_id": _safe_int(row.get("team_id")) if _safe_int(row.get("team_id")) is not None else -1,
+                "player_name": str(row.get("player_name") or "").strip(),
+                "max_health": max(0, _safe_int(row.get("max_health")) or 0),
+                "damage_total": float(row.get("damage_total", 0.0) or 0.0),
+                "ribbons": ribbons,
+            }
+        )
+    timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return timeline
+
+
 def _build_canonical(extraction) -> Dict[str, Any]:
     meta = dict(extraction.meta or {})
     map_id = meta.get("mapId")
@@ -253,9 +337,13 @@ def _build_canonical(extraction) -> Dict[str, Any]:
     artillery_fires = _normalize_artillery_fires(battle_state.get("artillery_shots", []))
     torpedo_points = _normalize_torpedo_points(battle_state.get("torpedo_points", []), owner_team)
     kill_feed = _normalize_kill_feed(battle_state.get("kill_feed", []))
+    chat_feed = _normalize_chat_feed(battle_state.get("chat_messages", []))
+    health_timeline = _normalize_health_timeline(battle_state.get("health_timeline", []))
+    player_status_timeline = _normalize_player_status_timeline(battle_state.get("player_status_timeline", []))
     control_points = _normalize_control_points(battle_state.get("control_points", []))
     local_team_id = _safe_int(battle_state.get("local_team_id"))
     enemy_team_id = _safe_int(battle_state.get("enemy_team_id"))
+    player_status_meta = battle_state.get("player_status_meta", {}) if isinstance(battle_state.get("player_status_meta"), dict) else {}
 
     if control_points:
         meta["control_points"] = control_points
@@ -263,6 +351,28 @@ def _build_canonical(extraction) -> Dict[str, Any]:
         meta["local_team_id"] = local_team_id
     if enemy_team_id is not None:
         meta["enemy_team_id"] = enemy_team_id
+    player_avatar_entity_id = _safe_int(player_status_meta.get("avatar_entity_id"))
+    player_ship_entity_id = _safe_int(player_status_meta.get("ship_entity_id"))
+    player_ship_id = _safe_int(player_status_meta.get("ship_params_id"))
+    if player_avatar_entity_id is not None and player_avatar_entity_id >= 0:
+        meta["player_avatar_entity_id"] = player_avatar_entity_id
+    if player_ship_entity_id is not None and player_ship_entity_id >= 0:
+        meta["player_ship_entity_id"] = player_ship_entity_id
+    if player_ship_id is not None and player_ship_id >= 0:
+        meta["player_ship_id"] = player_ship_id
+
+    for snap in health_timeline:
+        entities_raw = snap.get("entities", {})
+        if not isinstance(entities_raw, dict):
+            continue
+        for entity_key, state in entities_raw.items():
+            if entity_key not in entities or not isinstance(state, dict):
+                continue
+            max_hp = max(0, _safe_int(state.get("max_hp")) or 0)
+            hp = max(0, _safe_int(state.get("hp")) or 0)
+            if max_hp > 0:
+                entities[entity_key]["max_hp"] = max_hp
+            entities[entity_key]["initial_hp"] = max(entities[entity_key].get("initial_hp", 0), hp)
 
     final_scores: Dict[str, int] = {}
     final_scores_raw = battle_state.get("final_scores", {})
@@ -285,6 +395,9 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "captures": captures_timeline,
             "fires": artillery_fires,
             "kills": kill_feed,
+            "chat": chat_feed,
+            "health": health_timeline,
+            "player_status": player_status_timeline,
             "spotting": [],
             "torpedoes": torpedo_points,
         },
@@ -294,6 +407,9 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "battle_end_s": battle_end_s,
             "deaths": len(deaths),
             "kills": len(kill_feed),
+            "chat_messages": len(chat_feed),
+            "health_snapshots": len(health_timeline),
+            "player_status_samples": len(player_status_timeline),
             "artillery_shots": len(artillery_fires),
             "torpedo_points": len(torpedo_points),
             "team_scores_final": final_scores,

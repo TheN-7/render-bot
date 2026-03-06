@@ -10,3 +10,4 @@ Pillow
 numpy
 imageio
 imageio-ffmpeg
+discord.py
