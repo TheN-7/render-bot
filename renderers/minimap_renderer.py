@@ -1073,8 +1073,12 @@ def _load_ribbon_icon(ribbon_id: int, size: int) -> Image.Image | None:
             icon = Image.open(file_path).convert("RGBA")
         except Exception:
             continue
-        if size > 0 and icon.size != (size, size):
-            icon = icon.resize((size, size), Image.Resampling.LANCZOS)
+        if size > 0:
+            target_h = max(1, int(size))
+            scale = target_h / max(1, icon.height)
+            target_w = max(1, int(round(icon.width * scale)))
+            if icon.size != (target_w, target_h):
+                icon = icon.resize((target_w, target_h), Image.Resampling.LANCZOS)
         return icon
     return None
 
@@ -1287,7 +1291,7 @@ def _marker_name_text(value: Any, max_len: int = 14) -> str:
 
 
 def _sidebar_width(map_size: int) -> int:
-    width = max(360, min(560, int(map_size * 0.48)))
+    width = max(420, min(640, int(map_size * 0.62)))
     if width % 2:
         width += 1
     return width
@@ -1362,7 +1366,7 @@ def _ribbon_badge_size(ribbon_id: str, count: int, icon_size: int, badge_font: i
     icon = _load_ribbon_icon(rid or -1, icon_size) if rid is not None else None
     count_sprite = _text_sprite(f"x{int(count)}", badge_font, (242, 242, 255), shadow=(0, 0, 0), bold=True)
     if icon is not None and count_sprite is not None:
-        badge_w = icon.width + 8 + count_sprite.width + 14
+        badge_w = icon.width + 16 + count_sprite.width + 20
         badge_h = max(icon.height, count_sprite.height) + 6
         return badge_w, badge_h
     fallback = _text_sprite(f"R{int(ribbon_id)} x{int(count)}", badge_font, (242, 242, 255), shadow=None, bold=True)
@@ -2494,7 +2498,7 @@ def _ship_marker_image(
 ) -> Image.Image:
     heading_deg = (heading_bucket * bucket_deg) % 360.0
     if sunk:
-        outline_color = (150, 150, 150)
+        outline_color = (110, 110, 110)
         edge_mask = _wg_outline_icon_mask(ship_type, size)
         icon = None
         if edge_mask is not None:
@@ -2517,7 +2521,7 @@ def _ship_marker_image(
             lc,
             code,
             fill_color=None,
-            outline_color=(150, 150, 150),
+            outline_color=(110, 110, 110),
             size=max(4, size),
         )
     else:
@@ -2571,6 +2575,8 @@ def _draw_hp_bar(
     color: Tuple[int, int, int],
     sunk: bool = False,
 ) -> None:
+    if sunk:
+        return
     ratio = max(0.0, min(1.0, ratio))
     left = cx - width // 2
     top = cy
