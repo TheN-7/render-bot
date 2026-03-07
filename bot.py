@@ -12,7 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from minimap_render_v2 import render_minimap
+from minimap_render_v2 import PLAYBACK_DURATION_SCALE, render_minimap
 
 LOG = logging.getLogger("render_bot")
 CONFIG_PATH = Path(__file__).resolve().with_name("bot_config.json")
@@ -95,7 +95,7 @@ def _result_embed(filename: str, duration_s: int, canonical: dict[str, Any]) -> 
     embed.add_field(name="Map", value=map_name, inline=True)
     embed.add_field(name="Player", value=player_name, inline=True)
     embed.add_field(name="Ship", value=ship_name, inline=True)
-    embed.add_field(name="Target Length", value=f"{duration_s}s", inline=True)
+    embed.add_field(name="Output Length", value=f"{duration_s}s", inline=True)
     return embed
 
 
@@ -123,7 +123,7 @@ def _render_progress_embed(filename: str, duration_s: int, stage: str, current: 
     elapsed = max(0, int(time.monotonic() - started_at))
     embed = discord.Embed(title=title, color=discord.Color.blurple())
     embed.add_field(name="Replay", value=filename, inline=False)
-    embed.add_field(name="Target Length", value=f"{duration_s}s", inline=True)
+    embed.add_field(name="Output Length", value=f"{duration_s}s", inline=True)
     embed.add_field(name="Elapsed", value=f"{elapsed}s", inline=True)
     embed.add_field(name="Status", value=status, inline=False)
     embed.add_field(name="Progress", value=f"`{_progress_bar(current, total)}` {pct}%", inline=False)
@@ -168,6 +168,7 @@ async def render_command(
 
     await interaction.response.defer(thinking=True)
     started_at = time.monotonic()
+    effective_duration_s = int(round(float(duration_s) * PLAYBACK_DURATION_SCALE))
 
     try:
         replay_bytes = await replay.read()
@@ -193,7 +194,7 @@ async def render_command(
         asyncio.run_coroutine_threadsafe(_set_progress(stage, current, total), loop)
 
     await interaction.edit_original_response(
-        embed=_render_progress_embed(filename, int(duration_s), "loading", 0, 1, started_at),
+        embed=_render_progress_embed(filename, effective_duration_s, "loading", 0, 1, started_at),
         attachments=[],
         content=None,
     )
@@ -209,7 +210,7 @@ async def render_command(
             if snapshot != last_sent:
                 try:
                     await interaction.edit_original_response(
-                        embed=_render_progress_embed(filename, int(duration_s), stage, current, total, started_at),
+                        embed=_render_progress_embed(filename, effective_duration_s, stage, current, total, started_at),
                         attachments=[],
                         content=None,
                     )
@@ -263,7 +264,7 @@ async def render_command(
                 discord_file = discord.File(fp, filename=out_mp4.name)
                 await interaction.delete_original_response()
                 await interaction.followup.send(
-                    embed=_result_embed(filename, int(duration_s), result.get("canonical", {}) or {}),
+                    embed=_result_embed(filename, effective_duration_s, result.get("canonical", {}) or {}),
                     file=discord_file,
                 )
     except Exception as exc:

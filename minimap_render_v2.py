@@ -20,6 +20,7 @@ from renderers.minimap_renderer import estimate_animation_frame_count, iter_anim
 
 
 ProgressCallback = Callable[[str, int, int], None]
+PLAYBACK_DURATION_SCALE = 1.45
 
 
 def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
@@ -35,11 +36,12 @@ def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
 
 def _resolve_speed(canonical: Dict[str, Any], fps: int, speed: float, target_duration_s: float | None) -> float:
     if not target_duration_s or target_duration_s <= 0:
-        return max(0.05, float(speed))
+        return max(0.05, float(speed) / PLAYBACK_DURATION_SCALE)
     battle_seconds = _battle_duration_seconds(canonical)
     if battle_seconds <= 0:
-        return max(0.05, float(speed))
-    target_frames = max(2, int(round(float(target_duration_s) * max(1, int(fps)))))
+        return max(0.05, float(speed) / PLAYBACK_DURATION_SCALE)
+    effective_duration_s = float(target_duration_s) * PLAYBACK_DURATION_SCALE
+    target_frames = max(2, int(round(effective_duration_s * max(1, int(fps)))))
     return max(0.05, battle_seconds / float(max(1, target_frames - 1)))
 
 

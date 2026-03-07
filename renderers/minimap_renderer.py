@@ -34,6 +34,13 @@ SHIP_TYPE_TO_CODE = {
     "AirCarrier": "CV",
     "Submarine": "SS",
 }
+LINEUP_CLASS_ORDER = {
+    "Submarine": 0,
+    "Destroyer": 1,
+    "Cruiser": 2,
+    "Battleship": 3,
+    "AirCarrier": 4,
+}
 RIBBON_ID_TO_ASSET = {
     0: "main_caliber",
     1: "torpedo",
@@ -49,33 +56,33 @@ RIBBON_ID_TO_ASSET = {
     11: "base_capture_assist",
     12: "suppressed",
     13: "secondary_caliber",
-    14: "main_caliber",
-    15: "main_caliber",
-    16: "main_caliber",
-    17: "main_caliber",
+    14: "subribbons/subribbon_main_caliber_over_penetration.png",
+    15: "subribbons/subribbon_main_caliber_penetration.png",
+    16: "subribbons/subribbon_main_caliber_no_penetration.png",
+    17: "subribbons/subribbon_main_caliber_ricochet.png",
     18: "building_kill",
     19: "detected",
-    20: "bomb",
-    21: "bomb",
-    22: "bomb",
-    23: "bomb",
+    20: "subribbons/subribbon_bomb_over_penetration.png",
+    21: "subribbons/subribbon_bomb_penetration.png",
+    22: "subribbons/subribbon_bomb_no_penetration.png",
+    23: "subribbons/subribbon_bomb_ricochet.png",
     24: "rocket",
-    25: "rocket",
-    26: "rocket",
+    25: "subribbons/subribbon_rocket_penetration.png",
+    26: "subribbons/subribbon_rocket_no_penetration.png",
     27: "splane",
-    28: "main_caliber",
-    29: "bomb",
-    30: "rocket",
+    28: "subribbons/subribbon_bulge.png",
+    29: "subribbons/subribbon_bomb_bulge.png",
+    30: "subribbons/subribbon_rocket_bulge.png",
     31: "dbomb",
     32: "acoustic_hit",
     33: "drop",
-    34: "rocket",
-    35: "rocket",
-    39: "acoustic_hit",
-    40: "acoustic_hit",
-    41: "acoustic_hit",
-    43: "dbomb",
-    44: "dbomb",
+    34: "subribbons/subribbon_rocket_ricochet.png",
+    35: "subribbons/subribbon_rocket_over_penetration.png",
+    39: "subribbons/subribbon_acoustic_hit_vehicle_new.png",
+    40: "subribbons/subribbon_acoustic_hit_vehicle_curr.png",
+    41: "subribbons/subribbon_acoustic_hit_vehicle_block.png",
+    43: "subribbons/subribbon_dbomb_full_damage.png",
+    44: "subribbons/subribbon_dbomb_partial_damage.png",
     45: "mine",
     46: "demining_mine",
     47: "demining_minefield",
@@ -1051,9 +1058,6 @@ def _ribbon_asset_roots() -> Tuple[str, ...]:
     local_root = _root_dir() / "gui" / "ribbons"
     if local_root.exists():
         roots.append(str(local_root))
-    sub_root = local_root / "subribbons"
-    if sub_root.exists():
-        roots.append(str(sub_root))
     return tuple(roots)
 
 
@@ -1066,7 +1070,10 @@ def _load_ribbon_icon(ribbon_id: int, size: int) -> Image.Image | None:
     if not asset_name:
         return None
     for root in _ribbon_asset_roots():
-        file_path = Path(root) / f"ribbon_{asset_name}.png"
+        if asset_name.endswith(".png"):
+            file_path = Path(root) / asset_name
+        else:
+            file_path = Path(root) / f"ribbon_{asset_name}.png"
         if not file_path.exists():
             continue
         try:
@@ -1297,11 +1304,21 @@ def _sidebar_width(map_size: int) -> int:
     return width
 
 
+def _player_ribbon_icon_height(font_size: int) -> int:
+    return max(30, int(font_size * 2.7))
+
+
 def _split_lineups(render_tracks: Dict[str, Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     friendly = [v for v in render_tracks.values() if v.get("team_side") == "friendly"]
     enemy = [v for v in render_tracks.values() if v.get("team_side") == "enemy"]
-    friendly.sort(key=lambda v: int(v.get("team_number_local") or 999))
-    enemy.sort(key=lambda v: int(v.get("team_number_local") or 999))
+    def _sort_key(item: Dict[str, Any]) -> Tuple[int, int, str]:
+        ship_type = _ship_type(item.get("ship_id"))
+        class_rank = LINEUP_CLASS_ORDER.get(ship_type, 99)
+        team_no = int(item.get("team_number_local") or 999)
+        player_name = str(item.get("player_name") or "").lower()
+        return (class_rank, team_no, player_name)
+    friendly.sort(key=_sort_key)
+    enemy.sort(key=_sort_key)
     return friendly, enemy
 
 
@@ -1379,7 +1396,7 @@ def _ribbon_row_count(panel_width: int, font_size: int, ribbons: Dict[str, Any])
     items = _sorted_supported_ribbons(ribbons)
     if not items:
         return 0, 0
-    icon_size = max(34, int(font_size * 3.2))
+    icon_size = _player_ribbon_icon_height(font_size)
     badge_font = max(11, font_size + 1)
     inner_left = 10
     inner_right = 10
@@ -2648,7 +2665,7 @@ def _draw_player_status_panel(
 
     ribbons = dict(status.get("ribbons") or {})
     badge_font = max(11, font_size + 1)
-    icon_size = max(34, int(font_size * 3.2))
+    icon_size = _player_ribbon_icon_height(font_size)
     preview_x = x0 + 10
     preview_y = y0 + 28
     preview_w = max(112, min(220, int((x1 - x0) * 0.44)))
@@ -2839,12 +2856,8 @@ def _build_frame_base(
         if map_size >= 800:
             draw.rectangle([left, top, right, bottom], outline=(60, 90, 130), width=2)
 
-    friendly_total = len(layout.get("friendly_items", []))
-    enemy_total = len(layout.get("enemy_items", []))
-    count_sprite = _text_sprite(f"friendly {friendly_total} | enemy {enemy_total}", header_font_size, (220, 220, 220))
     title_sprite = _text_sprite(_map_title(canonical), header_font_size, (220, 220, 220))
-    _paste_sprite(img, count_sprite, 10, 10)
-    _paste_sprite(img, title_sprite, 10, 10 + max(16, header_font_size + 5))
+    _paste_sprite(img, title_sprite, 10, 10)
     return img
 
 
@@ -2945,17 +2958,7 @@ def _resolve_score_team_ids(canonical: Dict[str, Any], team_scores: Dict[int, in
     return local_team_id, enemy_team_id
 
 
-def _team_color_for_id(team_id: Optional[int], local_team_id: Optional[int], enemy_team_id: Optional[int]) -> Tuple[int, int, int]:
-    if team_id is None or team_id < 0:
-        return COLOR_UNKNOWN
-    if local_team_id is not None and team_id == local_team_id:
-        return COLOR_FRIENDLY
-    if enemy_team_id is not None and team_id == enemy_team_id:
-        return COLOR_ENEMY
-    return COLOR_UNKNOWN
-
-
-def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: Optional[Dict[str, Any]], canvas_size: int) -> None:
+def _score_overlay_state(canonical: Dict[str, Any], snapshot: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     team_scores: Dict[int, int] = {}
     team_win_score = 0
 
@@ -2983,7 +2986,7 @@ def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: O
         team_win_score = _safe_int(stats.get("team_win_score")) or team_win_score
 
     if not team_scores:
-        return
+        return None
 
     local_team_id, enemy_team_id = _resolve_score_team_ids(canonical, team_scores)
     ids = sorted(team_scores.keys())
@@ -2994,16 +2997,65 @@ def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: O
 
     left_score = team_scores.get(left_id, 0) if left_id is not None else 0
     right_score = team_scores.get(right_id, 0) if right_id is not None else 0
+    return {
+        "team_scores": team_scores,
+        "team_win_score": team_win_score,
+        "local_team_id": local_team_id,
+        "enemy_team_id": enemy_team_id,
+        "left_id": left_id,
+        "right_id": right_id,
+        "left_score": left_score,
+        "right_score": right_score,
+    }
+
+
+def _team_color_for_id(team_id: Optional[int], local_team_id: Optional[int], enemy_team_id: Optional[int]) -> Tuple[int, int, int]:
+    if team_id is None or team_id < 0:
+        return COLOR_UNKNOWN
+    if local_team_id is not None and team_id == local_team_id:
+        return COLOR_FRIENDLY
+    if enemy_team_id is not None and team_id == enemy_team_id:
+        return COLOR_ENEMY
+    return COLOR_UNKNOWN
+
+
+def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: Optional[Dict[str, Any]], canvas_size: int) -> None:
+    state = _score_overlay_state(canonical, snapshot)
+    if state is None:
+        return
+
+    team_win_score = int(state.get("team_win_score") or 0)
+    local_team_id = _safe_int(state.get("local_team_id"))
+    enemy_team_id = _safe_int(state.get("enemy_team_id"))
+    left_id = _safe_int(state.get("left_id"))
+    right_id = _safe_int(state.get("right_id"))
+    left_score = int(state.get("left_score") or 0)
+    right_score = int(state.get("right_score") or 0)
+    left_color = _team_color_for_id(left_id, local_team_id, enemy_team_id)
+    right_color = _team_color_for_id(right_id, local_team_id, enemy_team_id)
+
+    bar_goal = max(1, team_win_score or left_score or right_score or 1)
+    left_ratio = max(0.0, min(1.0, float(left_score) / float(bar_goal)))
+    right_ratio = max(0.0, min(1.0, float(right_score) / float(bar_goal)))
+    mid_x = canvas_size // 2
+    center_gap = max(3, canvas_size // 220)
+    bar_h = max(6, canvas_size // 120)
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+    draw_rgba.rectangle([0, 0, mid_x - center_gap, bar_h], fill=(18, 26, 42, 185))
+    draw_rgba.rectangle([mid_x + center_gap, 0, canvas_size, bar_h], fill=(18, 26, 42, 185))
+    left_fill_w = int(round((mid_x - center_gap) * left_ratio))
+    right_fill_w = int(round((canvas_size - (mid_x + center_gap)) * right_ratio))
+    if left_fill_w > 0:
+        draw_rgba.rectangle([0, 0, left_fill_w, bar_h], fill=left_color + (225,))
+    if right_fill_w > 0:
+        draw_rgba.rectangle([canvas_size - right_fill_w, 0, canvas_size, bar_h], fill=right_color + (225,))
 
     font_score_size = max(14, canvas_size // 36)
-    font_sub_size = max(9, canvas_size // 78)
     left_txt = str(left_score)
     right_txt = str(right_score)
     sep_txt = ":"
     gap = 8
 
-    left_color = _team_color_for_id(left_id, local_team_id, enemy_team_id)
-    right_color = _team_color_for_id(right_id, local_team_id, enemy_team_id)
     left_sprite = _text_sprite(left_txt, font_score_size, left_color, (0, 0, 0))
     sep_sprite = _text_sprite(sep_txt, font_score_size, (220, 220, 220), (0, 0, 0))
     right_sprite = _text_sprite(right_txt, font_score_size, right_color, (0, 0, 0))
@@ -3014,7 +3066,7 @@ def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: O
     rw = right_sprite.width
     total_w = lw + sw + rw + gap * 2
     x = canvas_size // 2 - total_w // 2
-    y = 8
+    y = bar_h + 2
 
     _paste_sprite(img, left_sprite, x, y)
     x += lw + gap
@@ -3022,15 +3074,48 @@ def _draw_score_overlay(img: Image.Image, canonical: Dict[str, Any], snapshot: O
     x += sw + gap
     _paste_sprite(img, right_sprite, x, y)
 
-    if team_win_score > 0:
-        sub = f"target {team_win_score}"
-        sub_sprite = _text_sprite(sub, font_sub_size, (200, 200, 200), (0, 0, 0))
-        if sub_sprite is None:
-            return
-        tw = sub_sprite.width
-        tx = canvas_size // 2 - tw // 2
-        ty = y + left_sprite.height + 1
-        _paste_sprite(img, sub_sprite, tx, ty)
+def _battle_result_text(canonical: Dict[str, Any]) -> Optional[Tuple[str, Tuple[int, int, int]]]:
+    state = _score_overlay_state(canonical, None)
+    if state is None:
+        return None
+    local_team_id = _safe_int(state.get("local_team_id"))
+    enemy_team_id = _safe_int(state.get("enemy_team_id"))
+    team_scores = dict(state.get("team_scores") or {})
+    if local_team_id is None or enemy_team_id is None:
+        return None
+    local_score = _safe_int(team_scores.get(local_team_id))
+    enemy_score = _safe_int(team_scores.get(enemy_team_id))
+    if local_score is None or enemy_score is None:
+        return None
+    if local_score > enemy_score:
+        return "VICTORY", (112, 235, 126)
+    if local_score < enemy_score:
+        return "DEFEAT", (255, 110, 110)
+    return "DRAW", (220, 220, 220)
+
+
+def _draw_battle_result_overlay(img: Image.Image, canonical: Dict[str, Any], canvas_size: int, alpha: int = 255) -> None:
+    result = _battle_result_text(canonical)
+    if result is None:
+        return
+    text, color = result
+    sprite = _text_sprite(text, max(30, canvas_size // 16), color, shadow=(0, 0, 0), bold=True, stroke_width=2, stroke_fill=(0, 0, 0))
+    if sprite is None:
+        return
+    alpha = max(0, min(255, int(alpha)))
+    if alpha < 255:
+        sprite = sprite.copy()
+        mask = sprite.getchannel("A").point(lambda value: int(value * alpha / 255.0))
+        sprite.putalpha(mask)
+    pad_x = max(16, canvas_size // 32)
+    pad_y = max(8, canvas_size // 64)
+    box_w = sprite.width + pad_x * 2
+    box_h = sprite.height + pad_y * 2
+    box_x = canvas_size // 2 - box_w // 2
+    box_y = canvas_size // 2 - box_h // 2
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+    draw_rgba.rounded_rectangle([box_x, box_y, box_x + box_w, box_y + box_h], radius=max(10, canvas_size // 64), fill=(0, 0, 0, min(185, alpha)))
+    _paste_sprite(img, sprite, box_x + pad_x, box_y + pad_y)
 
 
 def _cap_label(index: Any, fallback_i: int) -> str:
@@ -3359,6 +3444,7 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     duration_sprite = _text_sprite(f"duration={duration}s tracked={len(render_tracks)}", 12, (220, 220, 220))
     _paste_sprite(img, duration_sprite, 10, canvas_size - 22)
     _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
+    _draw_battle_result_overlay(img, canonical, canvas_size)
     status = _player_status_at(player_status_timeline, battle_end)
     frame_layout = _layout_for_player_status(layout, status)
     _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, battle_end, frame_layout)
@@ -3406,8 +3492,11 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     marker_size = max(6, canvas_size // 96)
     clock_x = canvas_size - max(80, ui_font_size * 7)
     base_frame = _build_frame_base(canonical, layout, margin, show_grid, ui_font_size, map_rect=map_rect)
+    total_frames = max(1, int(math.floor(max_clock / step)) + 2)
+    result_frames = max(14, min(24, total_frames))
 
     t = 0.0
+    frame_idx = 0
     while t <= max_clock + step:
         img = base_frame.copy()
         draw = ImageDraw.Draw(img)
@@ -3494,6 +3583,10 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         mins, secs = divmod(int(t), 60)
         _paste_sprite(img, _text_sprite(f"{mins}:{secs:02d}", ui_font_size, (220, 220, 220)), clock_x, 10)
         _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
+        if frame_idx >= max(0, total_frames - result_frames):
+            fade_frames = max(1, result_frames // 3)
+            alpha = int(255 * min(1.0, float(frame_idx - (total_frames - result_frames) + 1) / float(fade_frames)))
+            _draw_battle_result_overlay(img, canonical, canvas_size, alpha=alpha)
         status = _player_status_at(player_status_timeline, t)
         frame_layout = _layout_for_player_status(layout, status)
         _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t, frame_layout)
@@ -3501,6 +3594,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         _draw_lineup_panel(img, draw, frame_layout, current_t=t, death_times=death_times)
         yield img
         t += step
+        frame_idx += 1
 
 
 def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True) -> List[Image.Image]:

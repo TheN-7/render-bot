@@ -5,7 +5,8 @@ import math
 from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
-from renderers.minimap_renderer import _load_space_bin_world_bounds, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times
+from minimap_render_v2 import PLAYBACK_DURATION_SCALE, _resolve_speed
+from renderers.minimap_renderer import RIBBON_ID_TO_ASSET, _battle_result_text, _load_ribbon_icon, _load_space_bin_world_bounds, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times, _split_lineups, LINEUP_CLASS_ORDER, _ship_type
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -201,6 +202,40 @@ class ReplayPipelineTests(unittest.TestCase):
         }
         deaths = _find_death_times(canonical)
         self.assertEqual(12.5, deaths.get("42"))
+
+    def test_lineup_is_sorted_by_ship_class(self):
+        data = extract_replay(str(SAMPLE))
+        render_tracks = _normalize_render_tracks(data)
+        friendly, enemy = _split_lineups(render_tracks)
+        for lineup in (friendly, enemy):
+            ranks = [LINEUP_CLASS_ORDER.get(_ship_type(item.get("ship_id")), 99) for item in lineup]
+            self.assertEqual(ranks, sorted(ranks))
+
+    def test_shell_hit_ribbon_ids_map_to_distinct_subribbons(self):
+        self.assertEqual("subribbons/subribbon_main_caliber_over_penetration.png", RIBBON_ID_TO_ASSET[14])
+        self.assertEqual("subribbons/subribbon_main_caliber_penetration.png", RIBBON_ID_TO_ASSET[15])
+        self.assertEqual("subribbons/subribbon_main_caliber_no_penetration.png", RIBBON_ID_TO_ASSET[16])
+        self.assertEqual("subribbons/subribbon_main_caliber_ricochet.png", RIBBON_ID_TO_ASSET[17])
+        self.assertEqual("subribbons/subribbon_bulge.png", RIBBON_ID_TO_ASSET[28])
+
+    def test_shell_hit_subribbons_load_as_wide_icons(self):
+        for rid in (14, 15, 16, 17, 28):
+            icon = _load_ribbon_icon(rid, 34)
+            self.assertIsNotNone(icon, msg=f"missing ribbon icon for {rid}")
+            self.assertGreater(icon.width, icon.height, msg=f"expected wide subribbon for {rid}")
+
+    def test_resolve_speed_applies_playback_scale(self):
+        canonical = {"stats": {"battle_end_s": 100.0}}
+        resolved = _resolve_speed(canonical, fps=10, speed=3.0, target_duration_s=20.0)
+        expected = 100.0 / float(max(1, int(round(20.0 * PLAYBACK_DURATION_SCALE * 10)) - 1))
+        self.assertAlmostEqual(expected, resolved, places=6)
+
+    def test_battle_result_text_uses_local_team_score(self):
+        canonical = {
+            "meta": {"local_team_id": 1, "enemy_team_id": 0},
+            "stats": {"team_scores_final": {"0": 720, "1": 1000}, "team_win_score": 1000},
+        }
+        self.assertEqual(("VICTORY", (112, 235, 126)), _battle_result_text(canonical))
 
 
 if __name__ == "__main__":
