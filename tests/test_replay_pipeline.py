@@ -5,7 +5,7 @@ import math
 from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
-from renderers.minimap_renderer import _load_space_bin_world_bounds, _overview_half_extent, _world_bounds
+from renderers.minimap_renderer import _load_space_bin_world_bounds, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -176,6 +176,17 @@ class ReplayPipelineTests(unittest.TestCase):
         data = extract_replay(str(SAMPLE))
         bounds = _world_bounds(data)
         self.assertEqual((-700.0, 700.0, -700.0, 700.0), tuple(float(v) for v in bounds))
+
+    def test_player_layout_expands_for_extra_ribbon_rows(self):
+        data = extract_replay(str(SAMPLE))
+        render_tracks = _normalize_render_tracks(data)
+        base_layout = _render_layout(render_tracks, 512)
+        status = {
+            "ribbons": {"15": 12, "14": 9, "17": 8, "8": 6, "3": 5, "0": 4, "1": 3, "6": 2},
+        }
+        dynamic_layout = _layout_for_player_status(base_layout, status)
+        self.assertGreater(dynamic_layout["player_rect"][3], base_layout["player_rect"][3])
+        self.assertGreater(dynamic_layout["feed_rect"][1], base_layout["feed_rect"][1])
 
 
 if __name__ == "__main__":

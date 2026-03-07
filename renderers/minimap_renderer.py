@@ -1283,7 +1283,7 @@ def _render_layout(render_tracks: Dict[str, Dict[str, Any]], map_size: int) -> D
     friendly, enemy = _split_lineups(render_tracks)
     lineup_rows = max(max(len(friendly), len(enemy)), 12)
     lineup_h = header_h + lineup_rows * line_h + 8
-    player_h = max(120, min(190, int(map_size * 0.19)))
+    player_h = max(186, min(236, int(map_size * 0.23)))
     lineup_y = max(top_y + player_h + pad * 2 + 96, map_size - lineup_h - pad)
     feed_y = top_y + player_h + pad
     feed_bottom = max(feed_y + 96, lineup_y - pad)
@@ -1310,6 +1310,94 @@ def _render_layout(render_tracks: Dict[str, Dict[str, Any]], map_size: int) -> D
         "friendly_rect": friendly_rect,
         "enemy_rect": enemy_rect,
     }
+
+
+def _sorted_supported_ribbons(ribbons: Dict[str, Any]) -> List[Tuple[str, int]]:
+    supported_ribbons = _gameparams_supported_ribbon_ids()
+    items: List[Tuple[str, int]] = []
+    if not isinstance(ribbons, dict):
+        return items
+    for ribbon_id, count in ribbons.items():
+        rid = _safe_int(ribbon_id)
+        cnt = _safe_int(count)
+        if rid is None or cnt is None or cnt <= 0 or rid not in supported_ribbons:
+            continue
+        items.append((str(ribbon_id), int(cnt)))
+    items.sort(key=lambda item: (-int(item[1]), int(item[0])))
+    return items
+
+
+def _ribbon_badge_size(ribbon_id: str, count: int, icon_size: int, badge_font: int) -> Tuple[int, int]:
+    rid = _safe_int(ribbon_id)
+    icon = _load_ribbon_icon(rid or -1, icon_size) if rid is not None else None
+    count_sprite = _text_sprite(f"x{int(count)}", badge_font, (242, 242, 255), shadow=(0, 0, 0), bold=True)
+    if icon is not None and count_sprite is not None:
+        badge_w = icon.width + 8 + count_sprite.width + 14
+        badge_h = max(icon.height, count_sprite.height) + 6
+        return badge_w, badge_h
+    fallback = _text_sprite(f"R{int(ribbon_id)} x{int(count)}", badge_font, (242, 242, 255), shadow=None, bold=True)
+    if fallback is None:
+        return 0, 0
+    return fallback.width + 14, fallback.height + 6
+
+
+def _ribbon_row_count(panel_width: int, font_size: int, ribbons: Dict[str, Any]) -> Tuple[int, int]:
+    items = _sorted_supported_ribbons(ribbons)
+    if not items:
+        return 0, 0
+    icon_size = max(34, int(font_size * 3.2))
+    badge_font = max(11, font_size + 1)
+    inner_left = 10
+    inner_right = 10
+    usable_w = max(60, int(panel_width) - inner_left - inner_right)
+    rows = 1
+    row_w = 0
+    max_badge_h = 0
+    for ribbon_id, count in items:
+        badge_w, badge_h = _ribbon_badge_size(ribbon_id, count, icon_size, badge_font)
+        if badge_w <= 0 or badge_h <= 0:
+            continue
+        if row_w > 0 and row_w + 6 + badge_w > usable_w:
+            rows += 1
+            row_w = badge_w
+        else:
+            row_w = badge_w if row_w == 0 else row_w + 6 + badge_w
+        max_badge_h = max(max_badge_h, badge_h)
+    return rows, max_badge_h
+
+
+def _layout_for_player_status(layout: Dict[str, Any], status: Dict[str, Any]) -> Dict[str, Any]:
+    player_rect = tuple(layout.get("player_rect", (0, 0, 0, 0)))
+    feed_rect = tuple(layout.get("feed_rect", (0, 0, 0, 0)))
+    friendly_rect = tuple(layout.get("friendly_rect", (0, 0, 0, 0)))
+    if player_rect[2] <= player_rect[0] or feed_rect[2] <= feed_rect[0] or friendly_rect[3] <= friendly_rect[1]:
+        return layout
+
+    x0, y0, x1, y1 = map(int, player_rect)
+    panel_width = x1 - x0
+    base_player_h = y1 - y0
+    pad = int(layout.get("sidebar_pad", 10))
+    lineup_y = int(friendly_rect[1])
+    font_size = max(10, int(layout.get("font_size", 10)))
+    ribbon_rows, badge_h = _ribbon_row_count(panel_width, font_size, dict(status.get("ribbons") or {}))
+    extra_rows = max(0, ribbon_rows - 1)
+    target_h = base_player_h
+    if extra_rows > 0 and badge_h > 0:
+        target_h += extra_rows * (badge_h + 4)
+
+    min_feed_h = 72
+    max_player_h = max(base_player_h, lineup_y - y0 - pad * 2 - min_feed_h)
+    target_h = max(base_player_h, min(int(target_h), int(max_player_h)))
+
+    if target_h == base_player_h:
+        return layout
+
+    feed_y = y0 + target_h + pad
+    feed_bottom = max(feed_y + min_feed_h, lineup_y - pad)
+    updated = dict(layout)
+    updated["player_rect"] = (x0, y0, x1, y0 + target_h)
+    updated["feed_rect"] = (int(feed_rect[0]), feed_y, int(feed_rect[2]), feed_bottom)
+    return updated
 
 
 def _draw_polyline_with_gaps(
@@ -2557,6 +2645,11 @@ def _draw_player_status_panel(
         hp_color = COLOR_FRIENDLY if bool(health.get("alive", True)) else (165, 165, 165)
         _paste_sprite(img, _text_sprite(hp_text, font_size, hp_color, shadow=(0, 0, 0), stroke_width=1, stroke_fill=(0, 0, 0)), text_x, info_y + line_gap * 3)
 
+    info_lines = 4 if health is not None else 3
+    info_bottom = info_y + line_gap * info_lines + font_size + 2
+    content_bottom = max(preview_rect[3], info_bottom)
+    ribbons_title_y = max(ribbons_title_y, content_bottom + 10)
+
     _paste_sprite(img, _text_sprite("Ribbons", font_size, (205, 205, 205), shadow=(0, 0, 0), bold=True), x0 + 10, ribbons_title_y)
     badge_x = x0 + 10
     badge_y = ribbons_title_y + font_size + 5
@@ -3217,9 +3310,11 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     duration_sprite = _text_sprite(f"duration={duration}s tracked={len(render_tracks)}", 12, (220, 220, 220))
     _paste_sprite(img, duration_sprite, 10, canvas_size - 22)
     _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
-    _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, battle_end, layout)
-    _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, layout)
-    _draw_lineup_panel(img, draw, layout, current_t=battle_end, death_times=death_times)
+    status = _player_status_at(player_status_timeline, battle_end)
+    frame_layout = _layout_for_player_status(layout, status)
+    _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, battle_end, frame_layout)
+    _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, frame_layout)
+    _draw_lineup_panel(img, draw, frame_layout, current_t=battle_end, death_times=death_times)
     return img
 
 
@@ -3350,9 +3445,11 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         mins, secs = divmod(int(t), 60)
         _paste_sprite(img, _text_sprite(f"{mins}:{secs:02d}", ui_font_size, (220, 220, 220)), clock_x, 10)
         _draw_score_overlay(img, canonical, capture_snapshot, canvas_size)
-        _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t, layout)
-        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, layout)
-        _draw_lineup_panel(img, draw, layout, current_t=t, death_times=death_times)
+        status = _player_status_at(player_status_timeline, t)
+        frame_layout = _layout_for_player_status(layout, status)
+        _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t, frame_layout)
+        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, frame_layout)
+        _draw_lineup_panel(img, draw, frame_layout, current_t=t, death_times=death_times)
         yield img
         t += step
 
