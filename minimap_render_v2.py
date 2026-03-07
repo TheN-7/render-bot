@@ -21,6 +21,11 @@ from renderers.minimap_renderer import estimate_animation_frame_count, iter_anim
 
 ProgressCallback = Callable[[str, int, int], None]
 PLAYBACK_DURATION_SCALE = 1.45
+MP4_CRF = "17"
+MP4_PRESET = "slow"
+AUTO_OUTPUT_MIN_S = 40.0
+AUTO_OUTPUT_MAX_S = 60.0
+AUTO_BATTLE_MAX_S = 1200.0
 
 
 def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
@@ -43,6 +48,24 @@ def _resolve_speed(canonical: Dict[str, Any], fps: int, speed: float, target_dur
     effective_duration_s = float(target_duration_s) * PLAYBACK_DURATION_SCALE
     target_frames = max(2, int(round(effective_duration_s * max(1, int(fps)))))
     return max(0.05, battle_seconds / float(max(1, target_frames - 1)))
+
+
+def auto_output_duration_s(
+    canonical: Dict[str, Any],
+    min_output_s: float = AUTO_OUTPUT_MIN_S,
+    max_output_s: float = AUTO_OUTPUT_MAX_S,
+    max_battle_s: float = AUTO_BATTLE_MAX_S,
+) -> float:
+    battle_seconds = _battle_duration_seconds(canonical)
+    min_output_s = float(min_output_s)
+    max_output_s = max(min_output_s, float(max_output_s))
+    max_battle_s = max(1.0, float(max_battle_s))
+    ratio = max(0.0, min(1.0, battle_seconds / max_battle_s))
+    return min_output_s + (max_output_s - min_output_s) * ratio
+
+
+def internal_target_duration_s(output_duration_s: float) -> float:
+    return max(0.05, float(output_duration_s) / PLAYBACK_DURATION_SCALE)
 
 
 def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None = None, total_frames: int | None = None) -> None:
@@ -76,7 +99,7 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
             codec="libx264",
             macro_block_size=None,
             pixelformat="yuv420p",
-            output_params=["-crf", "18", "-preset", "medium", "-movflags", "+faststart"],
+            output_params=["-crf", MP4_CRF, "-preset", MP4_PRESET, "-movflags", "+faststart"],
         )
         try:
             _emit("encoding", 0, total)
@@ -116,9 +139,9 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
             "-c:v",
             "libx264",
             "-crf",
-            "18",
+            MP4_CRF,
             "-preset",
-            "medium",
+            MP4_PRESET,
             "-movflags",
             "+faststart",
             "-pix_fmt",
@@ -151,13 +174,14 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
 def render_minimap(
     replay_path: str,
     *,
+    canonical: Dict[str, Any] | None = None,
     out_mp4: str | None = None,
     out_png: str | None = None,
     out_gif: str | None = None,
     dump_json: str | None = None,
     dump_legacy_json: str | None = None,
     size: int = 1024,
-    fps: int = 12,
+    fps: int = 25,
     speed: float = 3.0,
     target_duration_s: float | None = None,
     show_labels: bool = True,
@@ -169,11 +193,12 @@ def render_minimap(
     if not src.is_file():
         raise FileNotFoundError(f"file not found: {replay_path}")
 
-    if progress is not None:
-        progress("loading", 0, 1)
-    canonical = load_canonical_data(str(src))
-    if progress is not None:
-        progress("loading", 1, 1)
+    if canonical is None:
+        if progress is not None:
+            progress("loading", 0, 1)
+        canonical = load_canonical_data(str(src))
+        if progress is not None:
+            progress("loading", 1, 1)
 
     if dump_json:
         with open(dump_json, "w", encoding="utf-8") as f:
@@ -246,7 +271,7 @@ def main() -> None:
     parser.add_argument("--png", default=None, help="Optional static PNG output path")
     parser.add_argument("--gif", default=None, help="Also save animated GIF")
     parser.add_argument("--size", type=int, default=1024, help="Canvas size px")
-    parser.add_argument("--fps", type=int, default=12, help="GIF fps")
+    parser.add_argument("--fps", type=int, default=25, help="Output fps")
     parser.add_argument("--speed", type=float, default=3.0, help="Game-seconds per frame (lower = slower playback)")
     parser.add_argument("--no-labels", action="store_true")
     parser.add_argument("--no-grid", action="store_true")

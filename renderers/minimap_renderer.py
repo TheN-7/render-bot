@@ -542,12 +542,12 @@ def _load_map_icon(url: str) -> Image.Image | None:
 def _native_map_size(canonical: Dict[str, Any], fallback: int) -> int:
     local_icon = _load_local_map_icon(_local_map_slug(canonical))
     if local_icon is not None:
-        return int(local_icon.width)
+        return int(max(int(fallback), int(local_icon.width)))
     url = _map_icon_url(canonical)
     icon = _load_map_icon(url) if url else None
     if icon is None:
         return int(fallback)
-    return int(icon.width)
+    return int(max(int(fallback), int(icon.width)))
 
 
 def _map_margin(canonical: Dict[str, Any], fallback: int = 40) -> int:
@@ -562,7 +562,10 @@ def _fit_icon_to_square(icon: Image.Image, map_size: int) -> Image.Image:
     if rgba.size == (map_size, map_size):
         return rgba
     if rgba.width == rgba.height:
-        return rgba.resize((map_size, map_size), Image.Resampling.LANCZOS)
+        fitted = rgba.resize((map_size, map_size), Image.Resampling.LANCZOS)
+        if map_size > max(rgba.width, rgba.height):
+            fitted = fitted.filter(ImageFilter.UnsharpMask(radius=1.2, percent=110, threshold=2))
+        return fitted
 
     scale = min(map_size / max(1, rgba.width), map_size / max(1, rgba.height))
     target = (
@@ -570,6 +573,8 @@ def _fit_icon_to_square(icon: Image.Image, map_size: int) -> Image.Image:
         max(1, int(round(rgba.height * scale))),
     )
     fitted = rgba.resize(target, Image.Resampling.LANCZOS)
+    if target[0] > rgba.width or target[1] > rgba.height:
+        fitted = fitted.filter(ImageFilter.UnsharpMask(radius=1.2, percent=110, threshold=2))
     square = Image.new("RGBA", (map_size, map_size), (0, 0, 0, 0))
     ox = (map_size - fitted.width) // 2
     oy = (map_size - fitted.height) // 2

@@ -5,8 +5,8 @@ import math
 from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
-from minimap_render_v2 import PLAYBACK_DURATION_SCALE, _resolve_speed
-from renderers.minimap_renderer import RIBBON_ID_TO_ASSET, _battle_result_text, _load_ribbon_icon, _load_space_bin_world_bounds, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times, _split_lineups, LINEUP_CLASS_ORDER, _ship_type
+from minimap_render_v2 import PLAYBACK_DURATION_SCALE, _resolve_speed, auto_output_duration_s, internal_target_duration_s
+from renderers.minimap_renderer import RIBBON_ID_TO_ASSET, _battle_result_text, _load_ribbon_icon, _load_space_bin_world_bounds, _native_map_size, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times, _split_lineups, LINEUP_CLASS_ORDER, _ship_type
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -236,6 +236,19 @@ class ReplayPipelineTests(unittest.TestCase):
             "stats": {"team_scores_final": {"0": 720, "1": 1000}, "team_win_score": 1000},
         }
         self.assertEqual(("VICTORY", (112, 235, 126)), _battle_result_text(canonical))
+
+    def test_native_map_size_respects_requested_floor(self):
+        data = extract_replay(str(SAMPLE))
+        self.assertEqual(1024, _native_map_size(data, 1024))
+
+    def test_auto_output_duration_stays_within_40_to_60_seconds(self):
+        self.assertAlmostEqual(40.0, auto_output_duration_s({"stats": {"battle_end_s": 0.0}}), places=3)
+        self.assertAlmostEqual(50.0, auto_output_duration_s({"stats": {"battle_end_s": 600.0}}), places=3)
+        self.assertAlmostEqual(60.0, auto_output_duration_s({"stats": {"battle_end_s": 1200.0}}), places=3)
+        self.assertAlmostEqual(60.0, auto_output_duration_s({"stats": {"battle_end_s": 1800.0}}), places=3)
+
+    def test_internal_target_duration_converts_output_seconds(self):
+        self.assertAlmostEqual(40.0 / PLAYBACK_DURATION_SCALE, internal_target_duration_s(40.0), places=6)
 
 
 if __name__ == "__main__":
