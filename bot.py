@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import tempfile
@@ -24,6 +25,10 @@ DEFAULT_RENDER_FPS = 25
 DUAL_RENDER_SIZE = 720
 RENDER_COOLDOWN_S = 120
 COOLDOWN_LOCK = asyncio.Lock()
+RENDER_QUEUE_CONDITION = asyncio.Condition()
+RENDER_QUEUE: list[int] = []
+ACTIVE_RENDER_TICKET: int | None = None
+NEXT_RENDER_TICKET = 1
 
 
 def _load_bot_token() -> str:
@@ -212,6 +217,106 @@ def _progress_bar(current: int, total: int, width: int = 12) -> str:
     filled = max(0, min(width, int(round((current / total) * width))))
     return "#" * filled + "-" * (width - filled)
 
+
+def _queue_embed(label: str, queue_position: int, queued_at: float, *, is_dual: bool, active_running: bool) -> discord.Embed:
+    title = "Dual Render Queued" if is_dual else "Render Queued"
+    status = "Waiting for the current render to finish" if active_running else "Starting soon"
+    elapsed = max(0, int(time.monotonic() - queued_at))
+    embed = discord.Embed(title=title, color=discord.Color.orange())
+    embed.add_field(name="Replay", value=label, inline=False)
+    embed.add_field(name="Queue Position", value=f"#{max(1, int(queue_position))}", inline=True)
+    embed.add_field(name="Queued", value=f"{elapsed}s", inline=True)
+    embed.add_field(name="Status", value=status, inline=False)
+    return embed
+
+
+async def _enqueue_render_ticket() -> int:
+    global NEXT_RENDER_TICKET
+    async with RENDER_QUEUE_CONDITION:
+        ticket_id = NEXT_RENDER_TICKET
+        NEXT_RENDER_TICKET += 1
+        RENDER_QUEUE.append(ticket_id)
+        RENDER_QUEUE_CONDITION.notify_all()
+        return ticket_id
+
+
+async def _queue_snapshot(ticket_id: int) -> tuple[int, bool, bool]:
+    async with RENDER_QUEUE_CONDITION:
+        is_active = ACTIVE_RENDER_TICKET == ticket_id
+        is_running = ACTIVE_RENDER_TICKET is not None
+        if is_active:
+            return 0, True, is_running
+        try:
+            position = RENDER_QUEUE.index(ticket_id) + 1
+        except ValueError:
+            position = 0
+        return position, False, is_running
+
+
+async def _acquire_render_turn(ticket_id: int) -> None:
+    global ACTIVE_RENDER_TICKET
+    async with RENDER_QUEUE_CONDITION:
+        while ACTIVE_RENDER_TICKET is not None or not RENDER_QUEUE or RENDER_QUEUE[0] != ticket_id:
+            await RENDER_QUEUE_CONDITION.wait()
+        ACTIVE_RENDER_TICKET = ticket_id
+        RENDER_QUEUE.pop(0)
+        RENDER_QUEUE_CONDITION.notify_all()
+
+
+async def _release_render_turn(ticket_id: int) -> None:
+    global ACTIVE_RENDER_TICKET
+    async with RENDER_QUEUE_CONDITION:
+        if ACTIVE_RENDER_TICKET == ticket_id:
+            ACTIVE_RENDER_TICKET = None
+        else:
+            with contextlib.suppress(ValueError):
+                RENDER_QUEUE.remove(ticket_id)
+        RENDER_QUEUE_CONDITION.notify_all()
+
+
+async def _queue_status_updater(
+    interaction: discord.Interaction,
+    label: str,
+    ticket_id: int,
+    queued_at: float,
+    *,
+    is_dual: bool,
+) -> None:
+    while True:
+        position, is_active, is_running = await _queue_snapshot(ticket_id)
+        if is_active or position <= 0:
+            return
+        try:
+            await interaction.edit_original_response(
+                embed=_queue_embed(label, position, queued_at, is_dual=is_dual, active_running=is_running),
+                attachments=[],
+                content=None,
+            )
+        except Exception:
+            LOG.exception("Failed to update queue message")
+            return
+        await asyncio.sleep(1.0)
+
+
+async def _enter_render_queue(interaction: discord.Interaction, label: str, *, is_dual: bool) -> int:
+    ticket_id = await _enqueue_render_ticket()
+    queued_at = time.monotonic()
+    position, _, is_running = await _queue_snapshot(ticket_id)
+    await interaction.edit_original_response(
+        embed=_queue_embed(label, position or 1, queued_at, is_dual=is_dual, active_running=is_running),
+        attachments=[],
+        content=None,
+    )
+
+    updater = asyncio.create_task(_queue_status_updater(interaction, label, ticket_id, queued_at, is_dual=is_dual))
+    try:
+        await _acquire_render_turn(ticket_id)
+    finally:
+        updater.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await updater
+    return ticket_id
+
 def _render_progress_embed(filename: str, output_length_label: str, stage: str, current: int, total: int, started_at: float) -> discord.Embed:
     pct = int(round((max(0, current) / max(1, total)) * 100))
     if stage == "loading":
@@ -331,121 +436,132 @@ async def render_command(
         return
 
     await interaction.response.defer(thinking=True)
-    started_at = time.monotonic()
-
-    try:
-        replay_bytes = await replay.read()
-    except Exception as exc:
-        LOG.exception("Failed to read replay attachment")
-        await interaction.followup.send(f"Failed to download the replay: {exc}", ephemeral=True)
-        return
 
     filename = _safe_name(replay.filename)
     stem = Path(filename).stem
-    progress_state = {"stage": "loading", "current": 0, "total": 1}
-    progress_lock = asyncio.Lock()
-    output_length_label = "auto"
-
-    async def _set_progress(stage: str, current: int, total: int) -> None:
-        async with progress_lock:
-            progress_state["stage"] = stage
-            progress_state["current"] = max(0, int(current))
-            progress_state["total"] = max(1, int(total))
-
-    loop = asyncio.get_running_loop()
-
-    def _progress_callback(stage: str, current: int, total: int) -> None:
-        asyncio.run_coroutine_threadsafe(_set_progress(stage, current, total), loop)
-
-    await interaction.edit_original_response(
-        embed=_render_progress_embed(filename, output_length_label, "loading", 0, 1, started_at),
-        attachments=[],
-        content=None,
-    )
-
-    async def _progress_updater() -> None:
-        last_sent: tuple[str, int, int] | None = None
-        while True:
-            async with progress_lock:
-                stage = str(progress_state["stage"])
-                current = int(progress_state["current"])
-                total = int(progress_state["total"])
-            snapshot = (stage, current, total)
-            if snapshot != last_sent:
-                try:
-                    await interaction.edit_original_response(
-                        embed=_render_progress_embed(filename, output_length_label, stage, current, total, started_at),
-                        attachments=[],
-                        content=None,
-                    )
-                except Exception:
-                    LOG.exception("Failed to update render progress message")
-                    return
-                last_sent = snapshot
-            if stage == "done":
-                return
-            await asyncio.sleep(1.0)
-
-    progress_task = asyncio.create_task(_progress_updater())
+    ticket_id: int | None = None
 
     try:
-        with tempfile.TemporaryDirectory(prefix="render_bot_") as tmpdir:
-            tmp = Path(tmpdir)
-            replay_path = tmp / filename
-            replay_path.write_bytes(replay_bytes)
-            canonical = await asyncio.to_thread(load_canonical_data, str(replay_path))
-            output_length_s = auto_output_duration_s(canonical)
-            output_length_label = f"{int(round(output_length_s))}s"
-            battle_seconds = float((canonical.get("stats", {}) or {}).get("battle_end_s") or 0.0)
-            render_speed = speed_for_output_duration(battle_seconds, DEFAULT_RENDER_FPS, output_length_s)
-
-            out_mp4 = tmp / f"{stem}_minimap.mp4"
-
-            result = await asyncio.to_thread(
-                render_minimap,
-                str(replay_path),
-                canonical=canonical,
-                out_mp4=str(out_mp4),
-                size=DEFAULT_RENDER_SIZE,
-                fps=DEFAULT_RENDER_FPS,
-                speed=render_speed,
-                target_duration_s=None,
-                show_labels=True,
-                show_grid=True,
-                progress=_progress_callback,
+        ticket_id = await _enter_render_queue(interaction, filename, is_dual=False)
+        started_at = time.monotonic()
+        try:
+            replay_bytes = await replay.read()
+        except Exception as exc:
+            LOG.exception("Failed to read replay attachment")
+            await interaction.edit_original_response(
+                embed=None,
+                content=f"Failed to download the replay: {exc}",
+                attachments=[],
             )
-            await _set_progress("done", 1, 1)
-            await progress_task
+            return
 
-            file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
-            file_size = out_mp4.stat().st_size
-            if file_size > file_limit:
-                await interaction.edit_original_response(
-                    embed=None,
-                    content=(
-                        f"Render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
-                        f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
-                    ),
-                    attachments=[],
-                )
-                return
+        progress_state = {"stage": "loading", "current": 0, "total": 1}
+        progress_lock = asyncio.Lock()
+        output_length_label = "auto"
 
-            with out_mp4.open("rb") as fp:
-                discord_file = discord.File(fp, filename=out_mp4.name)
-                await interaction.delete_original_response()
-                await interaction.followup.send(
-                    embed=_result_embed(filename, output_length_label, result.get("canonical", {}) or {}),
-                    file=discord_file,
-                )
-    except Exception as exc:
-        LOG.exception("Render failed")
-        if not progress_task.done():
-            progress_task.cancel()
+        async def _set_progress(stage: str, current: int, total: int) -> None:
+            async with progress_lock:
+                progress_state["stage"] = stage
+                progress_state["current"] = max(0, int(current))
+                progress_state["total"] = max(1, int(total))
+
+        loop = asyncio.get_running_loop()
+
+        def _progress_callback(stage: str, current: int, total: int) -> None:
+            asyncio.run_coroutine_threadsafe(_set_progress(stage, current, total), loop)
+
         await interaction.edit_original_response(
-            embed=None,
-            content=f"Render failed: {exc}",
+            embed=_render_progress_embed(filename, output_length_label, "loading", 0, 1, started_at),
             attachments=[],
+            content=None,
         )
+
+        async def _progress_updater() -> None:
+            last_sent: tuple[str, int, int] | None = None
+            while True:
+                async with progress_lock:
+                    stage = str(progress_state["stage"])
+                    current = int(progress_state["current"])
+                    total = int(progress_state["total"])
+                snapshot = (stage, current, total)
+                if snapshot != last_sent:
+                    try:
+                        await interaction.edit_original_response(
+                            embed=_render_progress_embed(filename, output_length_label, stage, current, total, started_at),
+                            attachments=[],
+                            content=None,
+                        )
+                    except Exception:
+                        LOG.exception("Failed to update render progress message")
+                        return
+                    last_sent = snapshot
+                if stage == "done":
+                    return
+                await asyncio.sleep(1.0)
+
+        progress_task = asyncio.create_task(_progress_updater())
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="render_bot_") as tmpdir:
+                tmp = Path(tmpdir)
+                replay_path = tmp / filename
+                replay_path.write_bytes(replay_bytes)
+                canonical = await asyncio.to_thread(load_canonical_data, str(replay_path))
+                output_length_s = auto_output_duration_s(canonical)
+                output_length_label = f"{int(round(output_length_s))}s"
+                battle_seconds = float((canonical.get("stats", {}) or {}).get("battle_end_s") or 0.0)
+                render_speed = speed_for_output_duration(battle_seconds, DEFAULT_RENDER_FPS, output_length_s)
+
+                out_mp4 = tmp / f"{stem}_minimap.mp4"
+
+                result = await asyncio.to_thread(
+                    render_minimap,
+                    str(replay_path),
+                    canonical=canonical,
+                    out_mp4=str(out_mp4),
+                    size=DEFAULT_RENDER_SIZE,
+                    fps=DEFAULT_RENDER_FPS,
+                    speed=render_speed,
+                    target_duration_s=None,
+                    show_labels=True,
+                    show_grid=True,
+                    progress=_progress_callback,
+                )
+                await _set_progress("done", 1, 1)
+                await progress_task
+
+                file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
+                file_size = out_mp4.stat().st_size
+                if file_size > file_limit:
+                    await interaction.edit_original_response(
+                        embed=None,
+                        content=(
+                            f"Render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
+                            f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
+                        ),
+                        attachments=[],
+                    )
+                    return
+
+                with out_mp4.open("rb") as fp:
+                    discord_file = discord.File(fp, filename=out_mp4.name)
+                    await interaction.delete_original_response()
+                    await interaction.followup.send(
+                        embed=_result_embed(filename, output_length_label, result.get("canonical", {}) or {}),
+                        file=discord_file,
+                    )
+        except Exception as exc:
+            LOG.exception("Render failed")
+            if not progress_task.done():
+                progress_task.cancel()
+            await interaction.edit_original_response(
+                embed=None,
+                content=f"Render failed: {exc}",
+                attachments=[],
+            )
+    finally:
+        if ticket_id is not None:
+            await _release_render_turn(ticket_id)
 
 
 @bot.tree.command(name="render_dual", description="Render a synchronized side-by-side MP4 from two WoWS replays of the same battle")
@@ -475,172 +591,183 @@ async def render_dual_command(
         return
 
     await interaction.response.defer(thinking=True)
-    started_at = time.monotonic()
-
-    try:
-        replay_a_bytes = await replay_a.read()
-        replay_b_bytes = await replay_b.read()
-    except Exception as exc:
-        LOG.exception("Failed to read dual replay attachments")
-        await interaction.followup.send(f"Failed to download the replays: {exc}", ephemeral=True)
-        return
 
     filename_a = _safe_name(replay_a.filename)
     filename_b = _safe_name(replay_b.filename)
     stem_a = Path(filename_a).stem
     stem_b = Path(filename_b).stem
     label = f"{filename_a}\n{filename_b}"
-    progress_state = {"stage": "loading", "current": 0, "total": 1}
-    progress_lock = asyncio.Lock()
-    output_length_label = "auto"
-
-    async def _set_progress(stage: str, current: int, total: int) -> None:
-        async with progress_lock:
-            progress_state["stage"] = stage
-            progress_state["current"] = max(0, int(current))
-            progress_state["total"] = max(1, int(total))
-
-    loop = asyncio.get_running_loop()
-
-    def _progress_callback(stage: str, current: int, total: int) -> None:
-        asyncio.run_coroutine_threadsafe(_set_progress(stage, current, total), loop)
-
-    await interaction.edit_original_response(
-        embed=_render_progress_embed(label, output_length_label, "loading", 0, 1, started_at),
-        attachments=[],
-        content=None,
-    )
-
-    async def _progress_updater() -> None:
-        last_sent: tuple[str, int, int] | None = None
-        while True:
-            async with progress_lock:
-                stage = str(progress_state["stage"])
-                current = int(progress_state["current"])
-                total = int(progress_state["total"])
-            snapshot = (stage, current, total)
-            if snapshot != last_sent:
-                try:
-                    await interaction.edit_original_response(
-                        embed=_render_progress_embed(label, output_length_label, stage, current, total, started_at),
-                        attachments=[],
-                        content=None,
-                    )
-                except Exception:
-                    LOG.exception("Failed to update dual render progress message")
-                    return
-                last_sent = snapshot
-            if stage == "done":
-                return
-            await asyncio.sleep(1.0)
-
-    progress_task = asyncio.create_task(_progress_updater())
+    ticket_id: int | None = None
 
     try:
-        with tempfile.TemporaryDirectory(prefix="render_dual_bot_") as tmpdir:
-            tmp = Path(tmpdir)
-            replay_a_path = tmp / filename_a
-            replay_b_path = tmp / filename_b
-            replay_a_path.write_bytes(replay_a_bytes)
-            replay_b_path.write_bytes(replay_b_bytes)
-
-            canonical_a = await asyncio.to_thread(load_canonical_data, str(replay_a_path))
-            canonical_b = await asyncio.to_thread(load_canonical_data, str(replay_b_path))
-
-            identity_error = _battle_identity_error(canonical_a, canonical_b)
-            if identity_error:
-                if not progress_task.done():
-                    progress_task.cancel()
-                await interaction.edit_original_response(embed=None, content=identity_error, attachments=[])
-                return
-
-            output_length_s = max(auto_output_duration_s(canonical_a), auto_output_duration_s(canonical_b))
-            output_length_label = f"{int(round(output_length_s))}s"
-            battle_seconds = max(
-                float((canonical_a.get("stats", {}) or {}).get("battle_end_s") or 0.0),
-                float((canonical_b.get("stats", {}) or {}).get("battle_end_s") or 0.0),
+        ticket_id = await _enter_render_queue(interaction, label, is_dual=True)
+        started_at = time.monotonic()
+        try:
+            replay_a_bytes = await replay_a.read()
+            replay_b_bytes = await replay_b.read()
+        except Exception as exc:
+            LOG.exception("Failed to read dual replay attachments")
+            await interaction.edit_original_response(
+                embed=None,
+                content=f"Failed to download the replays: {exc}",
+                attachments=[],
             )
-            render_speed = speed_for_output_duration(battle_seconds, DEFAULT_RENDER_FPS, output_length_s)
+            return
 
-            left_mp4 = tmp / f"{stem_a}_left.mp4"
-            right_mp4 = tmp / f"{stem_b}_right.mp4"
-            out_mp4 = tmp / _dual_output_filename(stem_a, stem_b)
+        progress_state = {"stage": "loading", "current": 0, "total": 1}
+        progress_lock = asyncio.Lock()
+        output_length_label = "auto"
 
-            def _progress_a(stage: str, current: int, total: int) -> None:
-                mapped = "encoding_a" if stage == "encoding" else "rendering_a"
-                _progress_callback(mapped, current, total)
+        async def _set_progress(stage: str, current: int, total: int) -> None:
+            async with progress_lock:
+                progress_state["stage"] = stage
+                progress_state["current"] = max(0, int(current))
+                progress_state["total"] = max(1, int(total))
 
-            def _progress_b(stage: str, current: int, total: int) -> None:
-                mapped = "encoding_b" if stage == "encoding" else "rendering_b"
-                _progress_callback(mapped, current, total)
+        loop = asyncio.get_running_loop()
 
-            await asyncio.to_thread(
-                render_minimap,
-                str(replay_a_path),
-                canonical=canonical_a,
-                out_mp4=str(left_mp4),
-                size=DUAL_RENDER_SIZE,
-                fps=DEFAULT_RENDER_FPS,
-                speed=render_speed,
-                target_duration_s=None,
-                show_labels=True,
-                show_grid=True,
-                progress=_progress_a,
-            )
-            await asyncio.to_thread(
-                render_minimap,
-                str(replay_b_path),
-                canonical=canonical_b,
-                out_mp4=str(right_mp4),
-                size=DUAL_RENDER_SIZE,
-                fps=DEFAULT_RENDER_FPS,
-                speed=render_speed,
-                target_duration_s=None,
-                show_labels=True,
-                show_grid=True,
-                progress=_progress_b,
-            )
-            await asyncio.to_thread(
-                stack_mp4_side_by_side,
-                str(left_mp4),
-                str(right_mp4),
-                str(out_mp4),
-                fps=DEFAULT_RENDER_FPS,
-                output_duration_s=output_length_s,
-                progress=_progress_callback,
-            )
-            await _set_progress("done", 1, 1)
-            await progress_task
+        def _progress_callback(stage: str, current: int, total: int) -> None:
+            asyncio.run_coroutine_threadsafe(_set_progress(stage, current, total), loop)
 
-            file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
-            file_size = out_mp4.stat().st_size
-            if file_size > file_limit:
-                await interaction.edit_original_response(
-                    embed=None,
-                    content=(
-                        f"Dual render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
-                        f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
-                    ),
-                    attachments=[],
-                )
-                return
-
-            with out_mp4.open("rb") as fp:
-                discord_file = discord.File(fp, filename=out_mp4.name)
-                await interaction.delete_original_response()
-                await interaction.followup.send(
-                    embed=_dual_result_embed(filename_a, filename_b, output_length_label, canonical_a, canonical_b),
-                    file=discord_file,
-                )
-    except Exception as exc:
-        LOG.exception("Dual render failed")
-        if not progress_task.done():
-            progress_task.cancel()
         await interaction.edit_original_response(
-            embed=None,
-            content=f"Dual render failed: {exc}",
+            embed=_render_progress_embed(label, output_length_label, "loading", 0, 1, started_at),
             attachments=[],
+            content=None,
         )
+
+        async def _progress_updater() -> None:
+            last_sent: tuple[str, int, int] | None = None
+            while True:
+                async with progress_lock:
+                    stage = str(progress_state["stage"])
+                    current = int(progress_state["current"])
+                    total = int(progress_state["total"])
+                snapshot = (stage, current, total)
+                if snapshot != last_sent:
+                    try:
+                        await interaction.edit_original_response(
+                            embed=_render_progress_embed(label, output_length_label, stage, current, total, started_at),
+                            attachments=[],
+                            content=None,
+                        )
+                    except Exception:
+                        LOG.exception("Failed to update dual render progress message")
+                        return
+                    last_sent = snapshot
+                if stage == "done":
+                    return
+                await asyncio.sleep(1.0)
+
+        progress_task = asyncio.create_task(_progress_updater())
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="render_dual_bot_") as tmpdir:
+                tmp = Path(tmpdir)
+                replay_a_path = tmp / filename_a
+                replay_b_path = tmp / filename_b
+                replay_a_path.write_bytes(replay_a_bytes)
+                replay_b_path.write_bytes(replay_b_bytes)
+
+                canonical_a = await asyncio.to_thread(load_canonical_data, str(replay_a_path))
+                canonical_b = await asyncio.to_thread(load_canonical_data, str(replay_b_path))
+
+                identity_error = _battle_identity_error(canonical_a, canonical_b)
+                if identity_error:
+                    if not progress_task.done():
+                        progress_task.cancel()
+                    await interaction.edit_original_response(embed=None, content=identity_error, attachments=[])
+                    return
+
+                output_length_s = max(auto_output_duration_s(canonical_a), auto_output_duration_s(canonical_b))
+                output_length_label = f"{int(round(output_length_s))}s"
+                battle_seconds = max(
+                    float((canonical_a.get("stats", {}) or {}).get("battle_end_s") or 0.0),
+                    float((canonical_b.get("stats", {}) or {}).get("battle_end_s") or 0.0),
+                )
+                render_speed = speed_for_output_duration(battle_seconds, DEFAULT_RENDER_FPS, output_length_s)
+
+                left_mp4 = tmp / f"{stem_a}_left.mp4"
+                right_mp4 = tmp / f"{stem_b}_right.mp4"
+                out_mp4 = tmp / _dual_output_filename(stem_a, stem_b)
+
+                def _progress_a(stage: str, current: int, total: int) -> None:
+                    mapped = "encoding_a" if stage == "encoding" else "rendering_a"
+                    _progress_callback(mapped, current, total)
+
+                def _progress_b(stage: str, current: int, total: int) -> None:
+                    mapped = "encoding_b" if stage == "encoding" else "rendering_b"
+                    _progress_callback(mapped, current, total)
+
+                await asyncio.to_thread(
+                    render_minimap,
+                    str(replay_a_path),
+                    canonical=canonical_a,
+                    out_mp4=str(left_mp4),
+                    size=DUAL_RENDER_SIZE,
+                    fps=DEFAULT_RENDER_FPS,
+                    speed=render_speed,
+                    target_duration_s=None,
+                    show_labels=True,
+                    show_grid=True,
+                    progress=_progress_a,
+                )
+                await asyncio.to_thread(
+                    render_minimap,
+                    str(replay_b_path),
+                    canonical=canonical_b,
+                    out_mp4=str(right_mp4),
+                    size=DUAL_RENDER_SIZE,
+                    fps=DEFAULT_RENDER_FPS,
+                    speed=render_speed,
+                    target_duration_s=None,
+                    show_labels=True,
+                    show_grid=True,
+                    progress=_progress_b,
+                )
+                await asyncio.to_thread(
+                    stack_mp4_side_by_side,
+                    str(left_mp4),
+                    str(right_mp4),
+                    str(out_mp4),
+                    fps=DEFAULT_RENDER_FPS,
+                    output_duration_s=output_length_s,
+                    progress=_progress_callback,
+                )
+                await _set_progress("done", 1, 1)
+                await progress_task
+
+                file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
+                file_size = out_mp4.stat().st_size
+                if file_size > file_limit:
+                    await interaction.edit_original_response(
+                        embed=None,
+                        content=(
+                            f"Dual render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
+                            f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
+                        ),
+                        attachments=[],
+                    )
+                    return
+
+                with out_mp4.open("rb") as fp:
+                    discord_file = discord.File(fp, filename=out_mp4.name)
+                    await interaction.delete_original_response()
+                    await interaction.followup.send(
+                        embed=_dual_result_embed(filename_a, filename_b, output_length_label, canonical_a, canonical_b),
+                        file=discord_file,
+                    )
+        except Exception as exc:
+            LOG.exception("Dual render failed")
+            if not progress_task.done():
+                progress_task.cancel()
+            await interaction.edit_original_response(
+                embed=None,
+                content=f"Dual render failed: {exc}",
+                attachments=[],
+            )
+    finally:
+        if ticket_id is not None:
+            await _release_render_turn(ticket_id)
 
 
 
