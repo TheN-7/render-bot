@@ -1366,6 +1366,24 @@ def _ribbon_row_count(panel_width: int, font_size: int, ribbons: Dict[str, Any])
     return rows, max_badge_h
 
 
+def _player_panel_required_height(panel_width: int, font_size: int, ribbons: Dict[str, Any]) -> int:
+    line_gap = max(16, font_size + 4)
+    preview_w = max(88, min(170, int(panel_width * 0.34)))
+    preview_h = max(56, min(96, int(round(preview_w * 0.72))))
+    preview_bottom = 28 + preview_h
+    info_bottom = 28 + line_gap * 4 + font_size + 2
+    content_bottom = max(preview_bottom, info_bottom)
+
+    rows, badge_h = _ribbon_row_count(panel_width, font_size, ribbons)
+    if rows <= 0 or badge_h <= 0:
+        return max(186, content_bottom + 14)
+
+    title_y = content_bottom + 10
+    badges_top = title_y + font_size + 5
+    badges_bottom = badges_top + rows * badge_h + max(0, rows - 1) * 4
+    return max(186, badges_bottom + 6)
+
+
 def _layout_for_player_status(layout: Dict[str, Any], status: Dict[str, Any]) -> Dict[str, Any]:
     player_rect = tuple(layout.get("player_rect", (0, 0, 0, 0)))
     feed_rect = tuple(layout.get("feed_rect", (0, 0, 0, 0)))
@@ -1379,13 +1397,9 @@ def _layout_for_player_status(layout: Dict[str, Any], status: Dict[str, Any]) ->
     pad = int(layout.get("sidebar_pad", 10))
     lineup_y = int(friendly_rect[1])
     font_size = max(10, int(layout.get("font_size", 10)))
-    ribbon_rows, badge_h = _ribbon_row_count(panel_width, font_size, dict(status.get("ribbons") or {}))
-    extra_rows = max(0, ribbon_rows - 1)
-    target_h = base_player_h
-    if extra_rows > 0 and badge_h > 0:
-        target_h += extra_rows * (badge_h + 4)
+    target_h = _player_panel_required_height(panel_width, font_size, dict(status.get("ribbons") or {}))
 
-    min_feed_h = 72
+    min_feed_h = 44
     max_player_h = max(base_player_h, lineup_y - y0 - pad * 2 - min_feed_h)
     target_h = max(base_player_h, min(int(target_h), int(max_player_h)))
 
@@ -2061,7 +2075,7 @@ def _draw_kill_feed_panel(
     panel_y = int(panel_rect[1])
     col_w = max(100, int(panel_rect[2]) - int(panel_rect[0]))
     panel_h_max = max(60, int(panel_rect[3]) - int(panel_rect[1]))
-    available_rows = max(4, min(14, (panel_h_max - 28) // line_h))
+    available_rows = max(1, min(14, (panel_h_max - 28) // line_h))
     rows.sort(key=lambda item: (float(item.get("time_s", 0.0)), 0 if str(item.get("type")) == "kill" else 1))
     visible = rows[-available_rows:]
     panel_h = min(panel_h_max, 20 + len(visible) * line_h + 8)
@@ -2599,12 +2613,11 @@ def _draw_player_status_panel(
     ribbons = dict(status.get("ribbons") or {})
     badge_font = max(11, font_size + 1)
     icon_size = max(34, int(font_size * 3.2))
-    ribbons_reserved_h = max(86, font_size + icon_size + 30)
-    ribbons_title_y = y1 - ribbons_reserved_h
     preview_x = x0 + 10
     preview_y = y0 + 28
     preview_w = max(88, min(170, int((x1 - x0) * 0.34)))
-    preview_h = max(50, ribbons_title_y - preview_y - 8)
+    preview_h = max(56, min(96, int(round(preview_w * 0.72))))
+    preview_h = min(preview_h, max(50, y1 - preview_y - 20))
     preview_rect = (preview_x, preview_y, preview_x + preview_w, preview_y + preview_h)
     draw.rounded_rectangle(preview_rect, radius=8, fill=(12, 16, 22), outline=(50, 60, 72))
     health = _health_state_at(health_timelines, ship_entity_key, t) if ship_entity_key else None
@@ -2648,7 +2661,7 @@ def _draw_player_status_panel(
     info_lines = 4 if health is not None else 3
     info_bottom = info_y + line_gap * info_lines + font_size + 2
     content_bottom = max(preview_rect[3], info_bottom)
-    ribbons_title_y = max(ribbons_title_y, content_bottom + 10)
+    ribbons_title_y = content_bottom + 10
 
     _paste_sprite(img, _text_sprite("Ribbons", font_size, (205, 205, 205), shadow=(0, 0, 0), bold=True), x0 + 10, ribbons_title_y)
     badge_x = x0 + 10
