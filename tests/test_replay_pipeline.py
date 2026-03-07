@@ -5,7 +5,7 @@ import math
 from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
-from renderers.minimap_renderer import _load_space_bin_world_bounds, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status
+from renderers.minimap_renderer import _load_space_bin_world_bounds, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -187,6 +187,20 @@ class ReplayPipelineTests(unittest.TestCase):
         dynamic_layout = _layout_for_player_status(base_layout, status)
         self.assertGreater(dynamic_layout["player_rect"][3], base_layout["player_rect"][3])
         self.assertGreater(dynamic_layout["feed_rect"][1], base_layout["feed_rect"][1])
+
+    def test_find_death_times_uses_health_timeline(self):
+        canonical = {
+            "entities": {"42": {"death_time": None}},
+            "events": {
+                "deaths": [],
+                "health": [
+                    {"time_s": 10.0, "entities": {"42": {"hp": 1000, "alive": True}}},
+                    {"time_s": 12.5, "entities": {"42": {"hp": 0, "alive": False}}},
+                ],
+            },
+        }
+        deaths = _find_death_times(canonical)
+        self.assertEqual(12.5, deaths.get("42"))
 
 
 if __name__ == "__main__":

@@ -1165,11 +1165,41 @@ def _to_px(
 
 def _find_death_times(canonical: Dict[str, Any]) -> Dict[str, float]:
     deaths: Dict[str, float] = {}
+    entities = canonical.get("entities", {}) or {}
+    if isinstance(entities, dict):
+        for entity_key, entity in entities.items():
+            if not isinstance(entity, dict):
+                continue
+            try:
+                death_t = float(entity.get("death_time"))
+            except (TypeError, ValueError):
+                death_t = -1.0
+            if death_t >= 0.0:
+                key = str(entity_key)
+                if key and (key not in deaths or death_t < deaths[key]):
+                    deaths[key] = death_t
     for event in canonical.get("events", {}).get("deaths", []):
         key = str(event.get("entity_key", ""))
         t = float(event.get("time_s", 0.0))
         if key and (key not in deaths or t < deaths[key]):
             deaths[key] = t
+    for snap in canonical.get("events", {}).get("health", []):
+        if not isinstance(snap, dict):
+            continue
+        t = float(snap.get("time_s", 0.0) or 0.0)
+        entities_raw = snap.get("entities", {})
+        if not isinstance(entities_raw, dict):
+            continue
+        for entity_key, state in entities_raw.items():
+            if not isinstance(state, dict):
+                continue
+            alive = bool(state.get("alive", True))
+            hp = _safe_int(state.get("hp"))
+            if alive and (hp is None or hp > 0):
+                continue
+            key = str(entity_key)
+            if key and (key not in deaths or t < deaths[key]):
+                deaths[key] = t
     return deaths
 
 
@@ -1368,8 +1398,8 @@ def _ribbon_row_count(panel_width: int, font_size: int, ribbons: Dict[str, Any])
 
 def _player_panel_required_height(panel_width: int, font_size: int, ribbons: Dict[str, Any]) -> int:
     line_gap = max(16, font_size + 4)
-    preview_w = max(88, min(170, int(panel_width * 0.34)))
-    preview_h = max(56, min(96, int(round(preview_w * 0.72))))
+    preview_w = max(112, min(220, int(panel_width * 0.44)))
+    preview_h = max(60, min(90, int(round(preview_w * 0.45))))
     preview_bottom = 28 + preview_h
     info_bottom = 28 + line_gap * 4 + font_size + 2
     content_bottom = max(preview_bottom, info_bottom)
@@ -2615,8 +2645,8 @@ def _draw_player_status_panel(
     icon_size = max(34, int(font_size * 3.2))
     preview_x = x0 + 10
     preview_y = y0 + 28
-    preview_w = max(88, min(170, int((x1 - x0) * 0.34)))
-    preview_h = max(56, min(96, int(round(preview_w * 0.72))))
+    preview_w = max(112, min(220, int((x1 - x0) * 0.44)))
+    preview_h = max(60, min(90, int(round(preview_w * 0.45))))
     preview_h = min(preview_h, max(50, y1 - preview_y - 20))
     preview_rect = (preview_x, preview_y, preview_x + preview_w, preview_y + preview_h)
     draw.rounded_rectangle(preview_rect, radius=8, fill=(12, 16, 22), outline=(50, 60, 72))
@@ -3277,7 +3307,8 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
         ship_type = _ship_type(track.get("ship_id"))
         ship_class = _ship_class_code(track.get("ship_id"))
         death_t = death_times.get(str(entity_key))
-        sunk = death_t is not None and battle_end >= death_t
+        health = _health_state_at(health_timelines, entity_key, battle_end)
+        sunk = (death_t is not None and battle_end >= death_t) or (health is not None and not bool(health.get("alive", True)))
         render_pts = _clamp_track_to_time(pts, float(death_t)) if sunk and death_t is not None else pts
         last_t = float(render_pts[-1].get("t", 0.0))
         heading_deg = _stable_heading_deg(render_pts, previous=None)
@@ -3305,7 +3336,6 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             size=8,
             sunk=sunk,
         )
-        health = _health_state_at(health_timelines, entity_key, float(death_t) if sunk and death_t is not None else battle_end)
         if health is not None:
             _draw_hp_bar(draw, ex, ey + 13, 28, 5, float(health.get("ratio", 0.0)), color, sunk=sunk or (not bool(health.get("alive", True))))
 
@@ -3399,7 +3429,8 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 idx = 0
                 synthetic_start = True
             death_t = death_times.get(str(entity_key))
-            sunk = death_t is not None and t >= death_t
+            health = _health_state_at(health_timelines, entity_key, t)
+            sunk = (death_t is not None and t >= death_t) or (health is not None and not bool(health.get("alive", True)))
             if sunk and death_t is not None:
                 idx = max(0, bisect_right(times, float(death_t)) - 1)
                 synthetic_start = False
@@ -3442,7 +3473,6 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 size=marker_size,
                 sunk=sunk,
             )
-            health = _health_state_at(health_timelines, entity_key, float(death_t) if sunk and death_t is not None else t)
             if health is not None:
                 _draw_hp_bar(
                     draw,
