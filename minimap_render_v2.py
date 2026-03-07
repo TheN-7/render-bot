@@ -26,6 +26,7 @@ MP4_PRESET = "slow"
 AUTO_OUTPUT_MIN_S = 40.0
 AUTO_OUTPUT_MAX_S = 60.0
 AUTO_BATTLE_MAX_S = 1200.0
+DUAL_OUTPUT_MAX_WIDTH = 1920
 
 
 def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
@@ -66,6 +67,23 @@ def auto_output_duration_s(
 
 def internal_target_duration_s(output_duration_s: float) -> float:
     return max(0.05, float(output_duration_s) / PLAYBACK_DURATION_SCALE)
+
+
+def speed_for_output_duration(battle_seconds: float, fps: int, output_duration_s: float) -> float:
+    battle_seconds = max(0.0, float(battle_seconds))
+    canonical = {"stats": {"battle_end_s": battle_seconds}}
+    return _resolve_speed(canonical, fps, 3.0, internal_target_duration_s(output_duration_s))
+
+
+def _ffmpeg_executable() -> str | None:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        return ffmpeg
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
 
 
 def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None = None, total_frames: int | None = None) -> None:
@@ -115,7 +133,7 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
         return
 
     # Fallback: ffmpeg raw-frame pipe to preserve full frame quality.
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = _ffmpeg_executable()
     if not ffmpeg:
         raise RuntimeError("MP4 export requires imageio+numpy or ffmpeg in PATH")
 
@@ -169,6 +187,70 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
             process.stdin.close()
     if process.returncode != 0:
         raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg MP4 export failed")
+
+
+def stack_mp4_side_by_side(
+    left_mp4: str,
+    right_mp4: str,
+    out_mp4: str,
+    *,
+    fps: int,
+    output_duration_s: float,
+    progress: ProgressCallback | None = None,
+) -> None:
+    ffmpeg = _ffmpeg_executable()
+    if not ffmpeg:
+        raise RuntimeError("Dual MP4 export requires ffmpeg")
+
+    fps = max(1, int(fps))
+    output_duration_s = max(1.0, float(output_duration_s))
+    max_width = max(640, int(DUAL_OUTPUT_MAX_WIDTH))
+    stop_pad = max(1.0, output_duration_s)
+    filter_complex = (
+        f"[0:v]fps={fps},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={stop_pad:.3f}[left];"
+        f"[1:v]fps={fps},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={stop_pad:.3f}[right];"
+        f"[left][right]hstack=inputs=2[stacked];"
+        f"[stacked]scale='min({max_width},iw)':-2:flags=lanczos[v]"
+    )
+
+    if progress is not None:
+        progress("stacking", 0, 1)
+
+    process = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(left_mp4),
+            "-i",
+            str(right_mp4),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-an",
+            "-t",
+            f"{output_duration_s:.3f}",
+            "-c:v",
+            "libx264",
+            "-crf",
+            MP4_CRF,
+            "-preset",
+            MP4_PRESET,
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+            str(out_mp4),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if process.returncode != 0:
+        raise RuntimeError(process.stderr.decode("utf-8", errors="replace") or "ffmpeg dual stack export failed")
+
+    if progress is not None:
+        progress("stacking", 1, 1)
 
 
 def render_minimap(

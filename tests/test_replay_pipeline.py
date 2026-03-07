@@ -5,7 +5,7 @@ import math
 from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
-from minimap_render_v2 import PLAYBACK_DURATION_SCALE, _resolve_speed, auto_output_duration_s, internal_target_duration_s
+from minimap_render_v2 import PLAYBACK_DURATION_SCALE, _resolve_speed, auto_output_duration_s, internal_target_duration_s, speed_for_output_duration
 from renderers.minimap_renderer import RIBBON_ID_TO_ASSET, _battle_result_text, _load_ribbon_icon, _load_space_bin_world_bounds, _native_map_size, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times, _split_lineups, LINEUP_CLASS_ORDER, _ship_type
 
 
@@ -249,6 +249,12 @@ class ReplayPipelineTests(unittest.TestCase):
 
     def test_internal_target_duration_converts_output_seconds(self):
         self.assertAlmostEqual(40.0 / PLAYBACK_DURATION_SCALE, internal_target_duration_s(40.0), places=6)
+
+    def test_speed_for_output_duration_matches_resolve_speed(self):
+        battle_seconds = 710.083
+        output_duration = 51.83
+        expected = _resolve_speed({"stats": {"battle_end_s": battle_seconds}}, 25, 3.0, internal_target_duration_s(output_duration))
+        self.assertAlmostEqual(expected, speed_for_output_duration(battle_seconds, 25, output_duration), places=6)
 
 
 if __name__ == "__main__":
