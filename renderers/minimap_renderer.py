@@ -262,13 +262,13 @@ def _kill_icon_cache_dir() -> Path:
 
 
 def _map_cache_dir() -> Path:
-    p = _root_dir() / "content" / "wg_map_icons"
+    p = _root_dir() / "content" / "wg_map_cache"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def _map_assets_root() -> Path:
-    return _root_dir() / "content" / "wg_map_icons"
+    return _root_dir() / "gui" / "spaces"
 
 
 def _overviewmaps_path() -> Path:

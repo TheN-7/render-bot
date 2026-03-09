@@ -6,7 +6,7 @@ from core.replay_extract import extract_replay
 from core.replay_unpack_adapter import TrackPoint, _sanitize_track, read_replay, decode_packets
 from core.replay_schema import validate_extraction, to_legacy_schema
 from minimap_render_v2 import PLAYBACK_DURATION_SCALE, _resolve_speed, auto_output_duration_s, internal_target_duration_s, speed_for_output_duration
-from renderers.minimap_renderer import RIBBON_ID_TO_ASSET, _battle_result_text, _load_ribbon_icon, _load_space_bin_world_bounds, _native_map_size, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times, _split_lineups, LINEUP_CLASS_ORDER, _ship_type
+from renderers.minimap_renderer import RIBBON_ID_TO_ASSET, _battle_result_text, _load_ribbon_icon, _load_space_bin_world_bounds, _map_assets_root, _map_cache_dir, _native_map_size, _overview_half_extent, _world_bounds, _normalize_render_tracks, _render_layout, _layout_for_player_status, _find_death_times, _split_lineups, LINEUP_CLASS_ORDER, _ship_type
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -240,6 +240,10 @@ class ReplayPipelineTests(unittest.TestCase):
     def test_native_map_size_respects_requested_floor(self):
         data = extract_replay(str(SAMPLE))
         self.assertEqual(1024, _native_map_size(data, 1024))
+
+    def test_map_roots_use_gui_spaces_and_dedicated_cache(self):
+        self.assertEqual((ROOT / "gui" / "spaces").resolve(), _map_assets_root().resolve())
+        self.assertEqual((ROOT / "content" / "wg_map_cache").resolve(), _map_cache_dir().resolve())
 
     def test_auto_output_duration_stays_within_40_to_60_seconds(self):
         self.assertAlmostEqual(40.0, auto_output_duration_s({"stats": {"battle_end_s": 0.0}}), places=3)
