@@ -944,11 +944,17 @@ def _resize_fit(base: Image.Image, max_w: int, max_h: int) -> Image.Image:
     return base.resize(size, Image.Resampling.LANCZOS)
 
 
-@lru_cache(maxsize=128)
+_SHIP_ALIVE_ICON_CACHE: Dict[Tuple[str, int, int], Image.Image] = {}
+
+
 def _load_ship_alive_icon(vehicle_code: str, max_w: int, max_h: int) -> Image.Image | None:
     vehicle_code = _normalize_vehicle_code(vehicle_code)
     if not vehicle_code:
         return None
+    cache_key = (vehicle_code, int(max_w), int(max_h))
+    cached = _SHIP_ALIVE_ICON_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     candidates = [
         _ship_icons_dir() / f"{vehicle_code}.png",
         _ships_silhouettes_dir() / f"{vehicle_code}.png",
@@ -961,17 +967,25 @@ def _load_ship_alive_icon(vehicle_code: str, max_w: int, max_h: int) -> Image.Im
         try:
             if path.stat().st_size <= 0:
                 continue
-            return _resize_fit(Image.open(path).convert("RGBA"), max_w, max_h)
+            icon = _resize_fit(Image.open(path).convert("RGBA"), max_w, max_h)
+            _SHIP_ALIVE_ICON_CACHE[cache_key] = icon
+            return icon
         except Exception:
             continue
     return None
 
 
-@lru_cache(maxsize=128)
+_SHIP_DEAD_ICON_CACHE: Dict[Tuple[str, int, int], Image.Image] = {}
+
+
 def _load_ship_dead_icon(vehicle_code: str, max_w: int, max_h: int) -> Image.Image | None:
     vehicle_code = _normalize_vehicle_code(vehicle_code)
     if not vehicle_code:
         return None
+    cache_key = (vehicle_code, int(max_w), int(max_h))
+    cached = _SHIP_DEAD_ICON_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     candidates = [_ship_dead_icons_dir() / f"{vehicle_code}.png"]
     base = None
     for path in candidates:
@@ -986,7 +1000,9 @@ def _load_ship_dead_icon(vehicle_code: str, max_w: int, max_h: int) -> Image.Ima
             continue
     if base is None:
         return None
-    return _resize_fit(base, max_w, max_h)
+    icon = _resize_fit(base, max_w, max_h)
+    _SHIP_DEAD_ICON_CACHE[cache_key] = icon
+    return icon
 
 
 def _compose_ship_status_icon(
