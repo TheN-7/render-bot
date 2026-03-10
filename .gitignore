@@ -71,6 +71,14 @@ spaces/*
 !spaces/17_NA_fault_line/
 !spaces/18_NE_ice_islands/
 !spaces/19_OC_prey/
+!spaces/20_NE_two_brothers/
+!spaces/22_tierra_del_fuego/
+!spaces/23_Shards/
+!spaces/25_sea_hope/
+!spaces/28_naval_mission/
+!spaces/33_new_tierra/
+
+
 
 # Debug outputs
 replay_debug/**/*.json
