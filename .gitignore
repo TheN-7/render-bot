@@ -64,7 +64,13 @@ spaces/*
 !spaces/05_Ring/
 !spaces/08_NE_passage/
 !spaces/10_NE_big_race/
-
+!spaces/13_OC_new_dawn/
+!spaces/14_Atlantic/
+!spaces/15_NE_north/
+!spaces/16_OC_bees_to_honey/
+!spaces/17_NA_fault_line/
+!spaces/18_NE_ice_islands/
+!spaces/19_OC_prey/
 
 # Debug outputs
 replay_debug/**/*.json
