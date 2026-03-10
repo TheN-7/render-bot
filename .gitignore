@@ -10,12 +10,36 @@ GameParam*.json
 !bot_config.json.example
 
 split
-content/
+# Keep essential assets for rendering
+!content/wg_ship_type_icons/
+!content/sessionstats_kill_icons/
+!content/overviewmaps.txt
+!content/wg_battlearenas_cache.json
+!content/wg_map_cache/
+!content/wg_ship_previews/
+!gui/ship_previews/
+!gui/spaces/
+!gui/ribbons/
+!gui/ship_icons/
+!gui/ship_dead_icons/
+!gui/ships_silhouettes/
+# Ignore the rest
+content/*
+!content/wg_ship_type_icons/
+!content/sessionstats_kill_icons/
+!content/overviewmaps.txt
+!content/wg_battlearenas_cache.json
+!content/wg_map_cache/
+!content/wg_ship_previews/
 langs/
-gui/
+gui/*
+!gui/ship_previews/
+!gui/spaces/
+!gui/ribbons/
+!gui/ship_icons/
+!gui/ship_dead_icons/
+!gui/ships_silhouettes/
 spaces/
-assets/
-crashes/
 
 # environment
 .env/
