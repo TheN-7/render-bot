@@ -59,7 +59,7 @@ gui/*
 !gui/ship_dead_icons/
 !gui/ship_dead_icons/**
 
-gui/spaces/*
+!gui/spaces/
 !gui/spaces/00_CO_ocean/
 !gui/spaces/01_solomon_islands/
 !gui/spaces/04_Archipelago/
