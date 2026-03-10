@@ -77,8 +77,16 @@ spaces/*
 !spaces/25_sea_hope/
 !spaces/28_naval_mission/
 !spaces/33_new_tierra/
-
-
+!spaces/34_OC_islands/
+!spaces/35_NE_north_winter/
+!spaces/37_Ridge/
+!spaces/38_Canada/
+!spaces/40_Okinawa/
+!spaces/41_Conquest/
+!spaces/42_Neighbors/
+!spaces/44_Path_warrior/
+!spaces/45_Zigzag/
+!spaces/46_Estuary/
 
 # Debug outputs
 replay_debug/**/*.json
