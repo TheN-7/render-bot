@@ -1,0 +1,362 @@
+{
+  "0": {
+    "description": "Somewhere in the Atlantic.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/00_CO_ocean_minimap_combined_c43b52287a823e8da760cc3e3bd7f42b4d577f37a150190a1f69378d9f1aa6d4.png",
+    "battle_arena_id": 0,
+    "name": "Ocean"
+  },
+  "1": {
+    "description": "This is a sunny paradise with an active volcano and the most important strategic airfield in the Pacific.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/01_solomon_islands_minimap_combined_d7636568a88be634edb81dd715047fd536856e47f0e91ae31bc1d379a40aea04.png",
+    "battle_arena_id": 1,
+    "name": "Solomon Islands"
+  },
+  "2": {
+    "description": "Russian islands in the Sea of Okhotsk.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/04_Archipelago_minimap_combined_88c5115c085344c4dd6fc0ad1328602b9f3e979e27d130b71fdd8f7f058f6dc8.png",
+    "battle_arena_id": 2,
+    "name": "Archipelago"
+  },
+  "3": {
+    "description": "A ring of mountainous islands that form a \"safe haven\" in the center of the map.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/05_Ring_minimap_combined_9b091589b005770886d48eaf3b790db36d7f6e296021cee93b75cc63f010c682.png",
+    "battle_arena_id": 3,
+    "name": "Ring"
+  },
+  "4": {
+    "description": "A strait between two continents encompassing both large and small islands.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/08_NE_passage_minimap_combined_ea68a8af81614adf4ac2d79e7bc6e0b06e059294bac9009e053b0a086086a9e4.png",
+    "battle_arena_id": 4,
+    "name": "Strait"
+  },
+  "5": {
+    "description": "A large island and a chain of small islands dividing the map into two parts.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/10_NE_big_race_minimap_combined_e163008b1c4bdae55455ac62d7553402cae05ed662d62282aa842022aea767ba.png",
+    "battle_arena_id": 5,
+    "name": "Big Race"
+  },
+  "6": {
+    "description": "New dawn in an area of combat operations.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/13_OC_new_dawn_minimap_combined_ea2857b176ad2ed0e42de6fc201f569e86858a21649217548684058be28ba685.png",
+    "battle_arena_id": 6,
+    "name": "New Dawn"
+  },
+  "7": {
+    "description": "Coastal area of the Atlantic Ocean.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/14_Atlantic_minimap_combined_40cf25b98e8cfabdc1a8636a8d7ef9320b851f13eaf4ad07a191327cdf9444aa.png",
+    "battle_arena_id": 7,
+    "name": "The Atlantic"
+  },
+  "8": {
+    "description": "Cold northern waters. Rough and tough battle.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/15_NE_north_minimap_combined_78bc89c1ed5d52653512eccf5c80cb0a0b6de376db3446a27d98cfc7e870d97e.png",
+    "battle_arena_id": 8,
+    "name": "North"
+  },
+  "9": {
+    "description": "Tropical waters somewhere in Melanesia.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/16_OC_bees_to_honey_minimap_combined_fcb4baf2103051ab60dca0da2cb21e82433716fe6d5b97484f0254bc7ee30678.png",
+    "battle_arena_id": 9,
+    "name": "Hotspot"
+  },
+  "10": {
+    "description": "Deep continental fracture hidden beneath the water.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/17_NA_fault_line_minimap_combined_109743603d1004538d7f05082330786b929ea2c05eae9343b03537b4785381b8.png",
+    "battle_arena_id": 10,
+    "name": "Fault Line"
+  },
+  "11": {
+    "description": "A home to whalers and hunters. Glacial icebergs and a severe climate.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/18_NE_ice_islands_minimap_combined_360fe1169cf1dd3a20fc6836a82379b98f0d3e814fc3ffa3f7e1768a81a7b416.png",
+    "battle_arena_id": 11,
+    "name": "Islands of Ice"
+  },
+  "12": {
+    "description": "A harbor suitable for navigation and destruction...",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/19_OC_prey_minimap_combined_ca7bc3d15abc8a8adfe86d5d19371da3ad03116d14ed038c38e40bf581a3a84c.png",
+    "battle_arena_id": 12,
+    "name": "Trap"
+  },
+  "13": {
+    "description": "Two large islands that share the map as siblings.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/20_NE_two_brothers_minimap_combined_695bb0826b0322dc1509bf0f1be958a797df0ea5b57ce744ec425114eaaad222.png",
+    "battle_arena_id": 13,
+    "name": "Two Brothers"
+  },
+  "14": {
+    "description": "Southern waters of Latin America: specific region, complex setting.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/22_tierra_del_fuego_minimap_combined_790458760fe4d46e321f4d71845d538689e67ec2e54831b78e81718144aee46d.png",
+    "battle_arena_id": 14,
+    "name": "Land of Fire"
+  },
+  "15": {
+    "description": "Extremely narrow straits combined with large islands.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/23_Shards_minimap_combined_926d3d6e5e670a00581a3c5f594fd07cfdab06faf8d838150819bc9696d1b3d5.png",
+    "battle_arena_id": 15,
+    "name": "Shards"
+  },
+  "16": {
+    "description": "A sea combining a lot of advantageous factors.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/25_sea_hope_minimap_combined_e8af2d6f5e0e9c81b13267fef3420d97ffff6cfdcfb7367af44ca2fadfe9b066.png",
+    "battle_arena_id": 16,
+    "name": "Sea of Fortune"
+  },
+  "17": {
+    "description": "Somewhere in the Red Sea.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/28_naval_mission_minimap_combined_a2540c8907471273e763da86f0839c053c926b51139865e16edc56694e82c28c.png",
+    "battle_arena_id": 17,
+    "name": "Tears of the Desert"
+  },
+  "18": {
+    "description": "The Nobel camp in the ice-cold embrace of New Land.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/33_new_tierra_minimap_combined_89c842b146ce14226b0a8973914d6413095b1a2804b1bc1e7f94669b2cff73ed.png",
+    "battle_arena_id": 18,
+    "name": "Polar"
+  },
+  "19": {
+    "description": "Jolly green islands of dear old Britain.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/34_OC_islands_minimap_combined_9610b1ad86bf875a5d340f138d3b6c7d9dbbb7a7cbea1d96de0c07000d5642c7.png",
+    "battle_arena_id": 19,
+    "name": "Islands"
+  },
+  "20": {
+    "description": "Battles are fought during polar nights as well.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/35_NE_north_winter_minimap_combined_a755fd70f0e813fd03c6223f0abaecd3b306a3d3a035093c264a068912ec9d55.png",
+    "battle_arena_id": 20,
+    "name": "Northern Lights"
+  },
+  "21": {
+    "description": "A mountain range in the middle of a strait.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/37_Ridge_minimap_combined_1523f149121379f132a23e7ca5a0b7dcd70d66ad61082c9b8821b5df640d976b.png",
+    "battle_arena_id": 21,
+    "name": "Mountain Range"
+  },
+  "22": {
+    "description": "North American islands somewhere near Canada.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/38_Canada_minimap_combined_dbe31e983056c46d774ebb11b374b4706ee9b45324a0916ff088a997d51b843b.png",
+    "battle_arena_id": 22,
+    "name": "Shatter"
+  },
+  "23": {
+    "description": "An area of fierce combat during World War II.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/40_Okinawa_minimap_combined_60ba7f5c34eef7ebade01f7b3cb2c5ed7f2983799da925680ea5640aeccd668d.png",
+    "battle_arena_id": 23,
+    "name": "Okinawa"
+  },
+  "24": {
+    "description": "Treacherous waters where Neptune lies in wait for his prey.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/41_Conquest_minimap_combined_e09348d0de40c32517cd6baaf7fadf510f86687c22d5674880a47987daf13cd1.png",
+    "battle_arena_id": 24,
+    "name": "Trident"
+  },
+  "25": {
+    "description": "The maritime border between Britain and France.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/42_Neighbors_minimap_combined_b338989da30208c2477c4a9c0c5478f3d83e68460b99be8468b1c41adecddfe5.png",
+    "battle_arena_id": 25,
+    "name": "Neighbors"
+  },
+  "26": {
+    "description": "Heroes walk their own path.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/44_Path_warrior_minimap_combined_e96bd223d6df81e284c7382b143bfd1c7a4818f0810d15619886fb262b0a3fc6.png",
+    "battle_arena_id": 26,
+    "name": "Warrior's Path"
+  },
+  "27": {
+    "description": "Islands are located in the shape of a loop. Artful steering helps to gain an advantage.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/45_Zigzag_minimap_combined_b9c0c341cf7c8337ab37278ea54fd0f443ff9f2ab6c624d3a6537d184467f12c.png",
+    "battle_arena_id": 27,
+    "name": "Loop"
+  },
+  "28": {
+    "description": "The mouth of a river flowing into a stormy sea.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/46_Estuary_minimap_combined_12cc64d2c7996a826ce85ecf6c6891801fccdff7c07cd50029aa431c073cd664.png",
+    "battle_arena_id": 28,
+    "name": "Estuary"
+  },
+  "29": {
+    "description": "A combination of various routes amid the islands. A body of water somewhere near China.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/47_Sleeping_Giant_minimap_combined_bc0d37f314ffb1a484fbeed4906394cb06a204c3cbee3ca58d8e048a85b3988b.png",
+    "battle_arena_id": 29,
+    "name": "Sleeping Giant"
+  },
+  "30": {
+    "description": "Setting: Scottish rocks, tense gameplay.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/50_Gold_harbor_minimap_combined_90901089bb3a5e7f7181baf01a53db2718f2007e6f76d269fccacc3ec649f647.png",
+    "battle_arena_id": 30,
+    "name": "Haven"
+  },
+  "31": {
+    "description": "Santorini",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/51_Greece_minimap_combined_055b450a553c1a1c364ab6eed8927058b886e07d7514a16d813b6468a78116d8.png",
+    "battle_arena_id": 31,
+    "name": "Greece"
+  },
+  "32": {
+    "description": "Crash Zone.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/52_Britain_minimap_combined_1ef6faa67ce4370a6cc7c06a476bca537582d4526b3a6569e1edab20fdc9d68a.png",
+    "battle_arena_id": 32,
+    "name": "Crash Zone Alpha"
+  },
+  "33": {
+    "description": "A Northern archipelago near large islands and a continent.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/53_Shoreside_minimap_combined_70b69a1f0ea40e0768a6aea55e9d9eb885dd847863d07b09a280a9918496cc15.png",
+    "battle_arena_id": 33,
+    "name": "Northern Waters"
+  },
+  "34": {
+    "description": "The Faroe Islands",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/54_Faroe_minimap_combined_4e20b2651699647a1c8bde27ff47283e2804d0fe7f850c1678b4e190f70b6280.png",
+    "battle_arena_id": 34,
+    "name": "The Faroe Islands"
+  },
+  "35": {
+    "description": "Seychelles",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/55_Seychelles_minimap_combined_b1b77e44536df51446dca46db3078b8d2bf2136390fc3827b0b6a80c85020c5a.png",
+    "battle_arena_id": 35,
+    "name": "Seychelles"
+  },
+  "36": {
+    "description": "Tropical islands scattered between the northern tip of Australia and the shores of Papua New Guinea.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/56_AngelWings_minimap_combined_e2b56cc27890d69fd60b173a39a2d78d88cb77aa9d5d17ecf55768abf3e29c71.png",
+    "battle_arena_id": 36,
+    "name": "Sunset Isles"
+  },
+  "37": {
+    "description": "Riposte",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/r01_military_navigation_minimap_combined_2a1fe18c40d4fc97e4f00ac599bd3f9ecf7de5ad4addc6c9b4e3f718db9c395d.png",
+    "battle_arena_id": 37,
+    "name": "Riposte"
+  },
+  "38": {
+    "description": "An aggressive attack on the Naval Station.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s01_NavalBase_minimap_combined_611c432bb29bf077a536968b942ceedf4cd193452afa0307607246a1f78c7260.png",
+    "battle_arena_id": 38,
+    "name": "Killer Whale"
+  },
+  "39": {
+    "description": "Defend yourself and survive!",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s02_Naval_Defense_minimap_combined_57447f42250923d7309cec586dbde45ac12121a4e1cac1cb79abe04387042e12.png",
+    "battle_arena_id": 39,
+    "name": "Naval Station Newport"
+  },
+  "40": {
+    "description": "Across Melanesian waters",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s03_Labyrinth_minimap_combined_354e9759969db9ddf12f992ecde6b85a6a113e560bd54d75d153d5c171816c53.png",
+    "battle_arena_id": 40,
+    "name": "Labyrinth\u00a0"
+  },
+  "42": {
+    "description": "Atoll",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s06_Atoll_minimap_combined_d49e4a33af87cd4295b37eae47049ba51ce84a5fe76b860fc4a62f36fd4bf832.png",
+    "battle_arena_id": 42,
+    "name": "Rouen Atoll"
+  },
+  "43": {
+    "description": "Narai",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s07_Advance_minimap_combined_f571004c82ca5f8d07510bed65a41a3a0dcc0781c3e862cbe31cea06ccd2036c.png",
+    "battle_arena_id": 43,
+    "name": "Sunda Islands"
+  },
+  "44": {
+    "description": "Hermes",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s09_LePVE_minimap_combined_342aeec1249a6a71729de631045a93ca89a66843ddabbddad665b93c14205369.png",
+    "battle_arena_id": 44,
+    "name": "Hermes"
+  },
+  "45": {
+    "description": "Cherry Blossom",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s10_USS_CL_minimap_combined_8ade328c9498790d8fbeee93a43a25580dd660e4da97546e1ed2150155ce3b02.png",
+    "battle_arena_id": 45,
+    "name": "Empress Augusta Bay"
+  },
+  "46": {
+    "description": "Normandy Coast",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s11_D_day_minimap_combined_5dffcbec14fda5df634a21d0010e4d3f1d71226c03314e5ce50a432e2f203581.png",
+    "battle_arena_id": 46,
+    "name": "Normandy Coast"
+  },
+  "47": {
+    "description": "Normandy Coast",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s11_D_day_2_minimap_combined_4ca314e68374df88a34993171b79f3b41ab2e77ddc641b24aac40828ffd3f9f7.png",
+    "battle_arena_id": 47,
+    "name": "Normandy Coast"
+  },
+  "48": {
+    "description": "Break through ice-cold waters as part of the Arctic Convoy. Escort the transport ships to safety as enemy forces close in and complete the Operation tasks to achieve victory!",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s12_WW2_OP1_minimap_combined_29be73acabacceb0f09df946d142f5821cf12d46f8a683656966b570f60ddceb.png",
+    "battle_arena_id": 48,
+    "name": "Barents Sea"
+  },
+  "49": {
+    "description": "Scout the darkened waters of the South Pacific and eliminate destroyers carrying vital cargo. Disrupt the resupply attempt and complete the Operation tasks to achieve victory!",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s13_WW2_OP2_minimap_combined_7785dbfbb7906389535d8b8c176e256e3aa6e137de12292c729670a355fc13e7.png",
+    "battle_arena_id": 49,
+    "name": "The Solomons"
+  },
+  "50": {
+    "description": "Provide fire support to secure strategic atolls in the Marshall Islands. Coordinate with cruiser San Diego and complete the Operation tasks to achieve victory!",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/s14_WW2_OP3_minimap_combined_d9105b1af58de8bdc77efe3179e46a4bd5ae4127c3d18a91eefec8017e7c0db6.png",
+    "battle_arena_id": 50,
+    "name": "The Atolls"
+  },
+  "51": {
+    "description": "The ruins of a megapolis grimace up at you through the water.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e08_PostApocalypse_minimap_combined_ad0148faa34f2f11086e0fcc0bf427c0cdb70088280693d0f7116b5576a9eddb.png",
+    "battle_arena_id": 51,
+    "name": "Flooded City"
+  },
+  "52": {
+    "description": "Saving Transylvania.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/50_VanHellsing_minimap_combined_f40abbe254981302078bb74c938db195f0f926af83a5f558dc5b8311458cd0aa.png",
+    "battle_arena_id": 52,
+    "name": "Saving Transylvania"
+  },
+  "53": {
+    "description": "Dragons Bay",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e02_Halloween_2017_minimap_combined_9ecc640b077513115214bedfa36ceaaead5838660ab04f063420bf3813e46339.png",
+    "battle_arena_id": 53,
+    "name": "Dragons Bay"
+  },
+  "57": {
+    "description": "Polygon",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e11_FreshGameplay_2021_minimap_combined_9758db1a9efb8f46fce407f046ee5fca47a9b8efdca2d25f5ca11332b9965f56.png",
+    "battle_arena_id": 57,
+    "name": "Polygon"
+  },
+  "58": {
+    "description": "Hot Tub",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e01_Jacuzzi_minimap_combined_663edbe12e6983085399544125568c56b8e6716d7189c94cf4b8411958c182cb.png",
+    "battle_arena_id": 58,
+    "name": "Hot Tub"
+  },
+  "59": {
+    "description": "Pi\u00f1ata Hunt",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e12_April_2024_bees_to_honey_minimap_combined_475789cfbabdbdc8106349ab73c431be218bdb40d17b8b71d70ff92e7064f742.png",
+    "battle_arena_id": 59,
+    "name": "Colorful Islands"
+  },
+  "60": {
+    "description": "The Borg have launched a relentless assault on Vulcan, targeting our scientists and technology.\n\nDefend Vulcan and repel the Borg attack!",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e13_Space_1_Defence_minimap_combined_dd6886090fde7c6923063976c9d6594aa9d38936d64a6f81138e9d42eae566f4.png",
+    "battle_arena_id": 60,
+    "name": "Planet Vulcan"
+  },
+  "61": {
+    "description": "The Borg have managed to capture certain strategic facilities on Vulcan. Their invasion is continuously spreading, and now a new region is being attacked.\n\nTake back the Key Areas captured by the Borg!",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e13_Space_2_Offence_minimap_combined_d73dd49d760033380131cf92e240fdf548a49a6f31fbfe70fdee0af7802327c9.png",
+    "battle_arena_id": 61,
+    "name": "Planet Vulcan"
+  },
+  "62": {
+    "description": "Defend Vulcan in a fight with the might of the Borg Fleet.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e13_Space_3_BossFight_minimap_combined_068806ec2365cddb318b8f4ff8c9c0ccfe30b4e65771154ce490db424e7e4257.png",
+    "battle_arena_id": 62,
+    "name": "Planet Vulcan"
+  },
+  "63": {
+    "description": "As a result of a temporal distortion, the forces of the New Earth Alliance have been thrown into an alternate past where the Citadel of Return has opened a portal from the future, disrupting the course of history. Your mission is to capture and hold the enemy base to seal the rift.",
+    "icon": "https://wows-gloss-icons.wgcdn.co/icons/spaces/e14_ModernEra_minimap_combined_97281b994d34507ae84de6ff503913c8f44c9d03d96388297f8a89b4e68a8fc1.png",
+    "battle_arena_id": 63,
+    "name": "Polar Waters"
+  }
+}

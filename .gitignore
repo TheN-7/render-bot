@@ -1,33 +1,68 @@
-# ignore raw data
-GameParams.data
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
 
-# python files
-__pycache__
-
-# ignore outputs
-GameParam*.json
-*.json
-
-
-split
-content/
-langs/
-gui/
-spaces/
-assets/
-crashes/
-
-# environment
+# Virtual envs / local env
 .env/
+.venv/
+venv/
+env/
+ENV/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+*.spec
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Local config/state (do not commit)
+bot_config.json
+bot_cooldowns.json
 game.path
 
+# Render outputs (generated)
+*_minimap.mp4
+*_minimap.gif
+*_minimap.png
+*_minimap.json
+*_minimap_legacy.json
+_debug_frame.png
 
-# pyinstaller
-dist/
-build/
-*.spec
-hidden-*.txt
-search.txt
+# Replays (generated/downloaded). Keep any committed samples explicitly if needed.
+*.wowsreplay
 
-# setup.cfg
-*.egg-info/
+# Large extracted map data (kept locally)
+spaces/
+gui/spaces/
+gui/wg_map_icons/
+
+# content/: keep only small, required metadata; ignore caches/large blobs
+content/*
+!content/overviewmaps.txt
+!content/wg_battlearenas_cache.json
+
+# gui/: keep only the assets the renderer uses; ignore everything else
+gui/*
+!gui/battle_hud/
+!gui/battle_hud/icon_frag/
+!gui/battle_hud/icon_frag/**
+!gui/battle_hud/GameParams.json
+!gui/ribbons/
+!gui/ribbons/**
+!gui/ship_icons/
+!gui/ship_icons/**
+!gui/ships_silhouettes/
+!gui/ships_silhouettes/**
+!gui/ship_dead_icons/
+!gui/ship_dead_icons/**
+
+# Debug outputs
+replay_debug/**/*.json
+
+# Crash dumps / misc
+crashes/

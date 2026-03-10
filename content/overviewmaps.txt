@@ -1,0 +1,192 @@
+WoWS Maps
+
+Islands
+Battle Tiers: 1-3
+Size: 24x24 km
+Replay File Name: xxx_34_OC_islands.wowsreplay
+
+Polar
+Battle Tiers: 1-3
+Size: 24x24 km
+Replay File Name: xxx_33_new_tierra.wowsreplay
+
+Solomon Islands
+
+Battle Tiers: 2-5
+Size: 30x30 km
+Replay File Name: xxx_01_solomon_islands.wowsreplay
+
+Big Race
+Battle Tiers: 2-5
+Size: 30x30 km
+Replay File Name: xxx_10_NE_big_race.wowsreplay
+
+Archipelago
+Battle Tiers: 3-5
+Size: 30x30 km
+Replay File Name: xxx_04_Archipelago.wowsreplay
+
+Ring
+Battle Tiers: 4-6
+Size: 36x36 km
+Replay File Name: xxx_05_Ring.wowsreplay
+
+Strait
+Battle Tiers: 4-6
+Size: 36x36 km
+Replay File Name: xxx_08_NE_passage.wowsreplay
+
+New Dawn
+Battle Tiers: 4-7
+Size: 36x36 km
+Replay File Name: xxx_13_OC_new_dawn.wowsreplay
+
+Fault Line
+Battle Tiers: 5-7
+Size: 42x42 km
+Replay File Name: xxx_17_NA_fault_line.wowsreplay
+
+Trident
+Battle Tiers: 6-★
+Size: 42x42 km
+Replay File Name: xxx_41_Conquest.wowsreplay
+
+Estuary
+Battle Tiers: 7-★
+Size: 42x42 km
+Replay File Name: xxx_46_Estuary.wowsreplay
+
+Neighbors
+Battle Tiers: 7-9
+Size: 42x42 km
+Replay File Name: xxx_42_Neighbors.wowsreplay
+
+Seychelles
+Battle Tiers: 7-9
+Size: 42x42 km
+Replay File Name: xxx_55_Seychelles.wowsreplay 
+
+Haven
+Battle Tiers: 7-★
+Size: 42x42 km
+Replay File Name: xxx_50_Gold_harbor.wowsreplay
+
+Two Brothers
+Battle Tiers: 7-★
+Size: 42x42 km
+Replay File Name: xxx_20_NE_two_brothers.wowsreplay
+
+Hotspot
+Battle Tiers: 8-★
+Size: 48x48 km
+Replay File Name: xxx_16_OC_bees_to_honey.wowsreplay
+
+Land of Fire
+Battle Tiers: 8-★
+Size: 48x48 km
+Replay File Name: xxx_22_tierra_del_fuego.wowsreplay
+
+North
+Battle Tiers: 8-★
+Size: 48x48 km
+Replay File Name: xxx_15_NE_north.wowsreplay
+
+Northern Lights
+Battle Tiers: 8-★
+Size: 48x48 km
+Replay File Name: xxx_35_NE_north_winter.wowsreplay
+
+Northern Waters
+Battle Tiers: 8-★
+Size: 42x42 km
+Replay File Name: xxx_53_Shoreside.wowsreplay
+
+Shards
+Battle Tiers: 8-★
+Size: 42x42 km
+Replay File Name: xxx_23_Shards.wowsreplay
+
+Trap
+Battle Tiers: 8-★
+Size: 42x42 km
+Replay File Name: xxx_19_OC_prey.wowsreplay
+
+Crash Zone Alpha
+Battle Tiers: 8-★
+Size: 42x42 km
+Replay File Name: xxx_52_Britain.wowsreplay
+
+The Faroe Islands
+Battle Tiers: 9-★
+Size: 48x48 km
+Replay File Name: xxx_54_Faroe.wowsreplay 
+
+Okinawa
+Battle Tiers: 9-★
+Size: 42x42 km
+Replay File Name: xxx_40_Okinawa.wowsreplay
+
+Islands of Ice
+Battle Tiers: 9-★
+Size: 42x42 km
+Replay File Name: xxx_18_NE_ice_islands.wowsreplay
+
+The Atlantic
+Battle Tiers: 9-★
+Size: 42x42 km
+Replay File Name: xxx_14_Atlantic.wowsreplay
+
+Shatter
+Battle Tiers: 9-★
+Size: 48x48 km
+Replay File Name: xxx_38_Canada.wowsreplay
+
+Mountain Range
+Battle Tiers: 9-★
+Size: 48x48 km
+Replay File Name: xxx_37_Ridge.wowsreplay
+
+Warrior's Path
+Battle Tiers: 9-★
+Size: 48x48 km
+Replay File Name: xxx_44_Path_warrior.wowsrepla
+
+Sea of Fortune
+Battle Tiers: 9-★
+Size: 48x48 km
+Replay File Name: xxx_25_sea_hope.wowsreplay
+
+Loop
+Battle Tiers: 9-★
+Size: 48x48 km
+Replay File Name: xxx_45_Zigzag.wowsreplay
+
+Sleeping Giant
+Battle Tiers: 9-★
+Size: 42x42 km
+Replay File Name: xxx_47_Sleeping_Giant.wowsreplay
+
+Greece
+Battle Tiers: 9-★
+Size: 42x42 km
+Replay File Name: xxx_51_Greece.wowsreplay
+
+Tears of the Desert
+Battle Tiers: 9-★
+Size: 42x42 km
+Replay File Name: xxx_28_naval_mission.wowsreplay
+
+Ocean
+Battle Tiers: 10-★
+Size: 36x36 km
+Replay File Name: xxx_00_CO_ocean.wowsreplay
+
+Riposte
+Battle Tiers: Ranked Only
+Size: 42x42 km
+Replay File Name: xxx_r01_military_navigation.wowsreplay
+
+Sunset Isles
+Battle Tiers: Unknown
+Size: 48x48 km
+Replay File Name: xxx_56_AngelWings.wowsreplay
