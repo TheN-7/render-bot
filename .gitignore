@@ -87,6 +87,14 @@ spaces/*
 !spaces/44_Path_warrior/
 !spaces/45_Zigzag/
 !spaces/46_Estuary/
+!spaces/47_Sleeping_Giant/
+!spaces/50_Gold_harbor/
+!spaces/51_Greece/
+!spaces/52_Britain/
+!spaces/53_Shoreside/
+!spaces/54_Faroe/
+!spaces/55_Seychelles/
+!spaces/56_AngelWings/
 
 # Debug outputs
 replay_debug/**/*.json
