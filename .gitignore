@@ -36,10 +36,7 @@ _debug_frame.png
 # Replays (generated/downloaded). Keep any committed samples explicitly if needed.
 *.wowsreplay
 
-# Large extracted map data (kept locally)
-spaces/
-gui/spaces/
-gui/wg_map_icons/
+
 
 # content/: keep only small, required metadata; ignore caches/large blobs
 content/*
@@ -60,6 +57,14 @@ gui/*
 !gui/ships_silhouettes/**
 !gui/ship_dead_icons/
 !gui/ship_dead_icons/**
+spaces/*
+!spaces/00_CO_ocean/
+!spaces/01_solomon_islands/
+!spaces/04_Archipelago/
+!spaces/05_Ring/
+!spaces/08_NE_passage/
+!spaces/10_NE_big_race/
+
 
 # Debug outputs
 replay_debug/**/*.json
