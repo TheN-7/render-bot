@@ -15,6 +15,7 @@ build/
 dist/
 *.egg-info/
 *.spec
+.gitignore
 
 # OS/editor noise
 .DS_Store
@@ -95,6 +96,19 @@ spaces/*
 !spaces/54_Faroe/
 !spaces/55_Seychelles/
 !spaces/56_AngelWings/
+!spaces/e14_ModernEra/
+!spaces/Exterior/
+!spaces/r01_military_navigation/
+!spaces/s01_NavalBase/
+!spaces/s02_Naval_Defense/
+!spaces/s03_Labyrinth/
+!spaces/s06_Atoll/
+!spaces/s07_Advance/
+!spaces/s09_LePVE/
+!spaces/s10_USS_CL/
+!spaces/s12_WW2_OP1/
+!spaces/s13_WW2_OP2/
+!spaces/s14_WW2_OP3/
 
 # Debug outputs
 replay_debug/**/*.json
