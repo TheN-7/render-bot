@@ -135,6 +135,16 @@ def _team_side_for_team_label(team_label: Any) -> str:
     return "unknown"
 
 
+def _team_label_for_team_id(team_id: Optional[int], local_team_id: Optional[int], enemy_team_id: Optional[int]) -> str:
+    if team_id is None or team_id < 0:
+        return "unknown"
+    if local_team_id is not None and team_id == local_team_id:
+        return "ally"
+    if enemy_team_id is not None and team_id == enemy_team_id:
+        return "enemy"
+    return "unknown"
+
+
 def _normalize_torpedo_points(raw_points: Any, owner_team: Dict[str, str]) -> list[Dict[str, Any]]:
     if not isinstance(raw_points, list):
         return []
@@ -164,6 +174,33 @@ def _normalize_torpedo_points(raw_points: Any, owner_team: Dict[str, str]) -> li
         )
     )
     return points
+
+
+def _normalize_squadrons(raw_events: Any, local_team_id: Optional[int], enemy_team_id: Optional[int]) -> list[Dict[str, Any]]:
+    if not isinstance(raw_events, list):
+        return []
+    events: list[Dict[str, Any]] = []
+    for row in raw_events:
+        if not isinstance(row, dict):
+            continue
+        team_id = _safe_int(row.get("team_id"))
+        team_label = _team_label_for_team_id(team_id, local_team_id, enemy_team_id)
+        events.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "event": str(row.get("event") or "update"),
+                "squadron_id": _safe_int(row.get("squadron_id")) or -1,
+                "params_id": _safe_int(row.get("params_id")) or -1,
+                "x": float(row.get("x", 0.0) or 0.0) if row.get("x") is not None else None,
+                "z": float(row.get("z", 0.0) or 0.0) if row.get("z") is not None else None,
+                "team_id": team_id if team_id is not None else -1,
+                "team": team_label,
+                "team_side": _team_side_for_team_label(team_label),
+                "visible": bool(row.get("visible", True)),
+            }
+        )
+    events.sort(key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("squadron_id", -1)), str(item.get("event", ""))))
+    return events
 
 
 def _normalize_kill_feed(raw_kills: Any) -> list[Dict[str, Any]]:
@@ -343,6 +380,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
     control_points = _normalize_control_points(battle_state.get("control_points", []))
     local_team_id = _safe_int(battle_state.get("local_team_id"))
     enemy_team_id = _safe_int(battle_state.get("enemy_team_id"))
+    squadron_events = _normalize_squadrons(battle_state.get("squadrons", []), local_team_id, enemy_team_id)
     player_status_meta = battle_state.get("player_status_meta", {}) if isinstance(battle_state.get("player_status_meta"), dict) else {}
 
     if control_points:
@@ -400,6 +438,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "player_status": player_status_timeline,
             "spotting": [],
             "torpedoes": torpedo_points,
+            "squadrons": squadron_events,
         },
         "stats": {
             "tracked_entities": len(tracks),
@@ -412,6 +451,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "player_status_samples": len(player_status_timeline),
             "artillery_shots": len(artillery_fires),
             "torpedo_points": len(torpedo_points),
+            "squadron_events": len(squadron_events),
             "team_scores_final": final_scores,
             "team_win_score": team_win_score,
         },

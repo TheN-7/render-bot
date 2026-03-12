@@ -34,6 +34,22 @@ SHIP_TYPE_TO_CODE = {
     "AirCarrier": "CV",
     "Submarine": "SS",
 }
+SQUADRON_TYPE_TO_ICON = {
+    "torpedo": "icon_default_plane_torpedo.png",
+    "torpedo_deepwater": "icon_default_plane_torpedo_deepwater.png",
+    "bomber": "icon_default_plane_bomb_he.png",
+    "bomber_ap": "icon_default_plane_bomb_ap.png",
+    "skip": "icon_default_plane_skip_bomb_he.png",
+    "skip_ap": "icon_default_plane_skip_bomb_ap.png",
+    "rocket": "icon_default_plane_projectile.png",
+    "rocket_ap": "icon_default_plane_projectile_ap.png",
+    "fighter": "icon_default_plane_fighter.png",
+    "asw": "icon_default_asup_bomb_depthcharge.png",
+    "asw_mine": "icon_default_asup_mine.png",
+    "main": "icon_default_plane_projectile.png",
+    "default": "icon_default_plane_projectile.png",
+}
+AIRCRAFT_ICON_HEADING_OFFSET_DEG = -90.0
 LINEUP_CLASS_ORDER = {
     "Submarine": 0,
     "Destroyer": 1,
@@ -200,6 +216,10 @@ def _ships_silhouettes_dir() -> Path:
 
 def _ship_dead_icons_dir() -> Path:
     return _root_dir() / "gui" / "ship_dead_icons"
+
+
+def _aircraft_dir() -> Path:
+    return _root_dir() / "gui" / "service_kit" / "plane_types"
 
 
 @lru_cache(maxsize=1)
@@ -790,6 +810,66 @@ def _wg_tinted_icon(ship_type: str, color: Tuple[int, int, int], size: int) -> I
     tinted = Image.new("RGBA", icon.size, (color[0], color[1], color[2], 0))
     tinted.putalpha(alpha)
     return tinted
+
+
+@lru_cache(maxsize=1)
+def _load_aircraft_params() -> Dict[str, str]:
+    params_path = _root_dir() / "aircraft_params.json"
+    try:
+        if params_path.exists():
+            payload = json.loads(params_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return {str(k): str(v) for k, v in payload.items() if str(v).strip()}
+    except Exception:
+        return {}
+    return {}
+
+
+def _squadron_type_from_params(params_id: Any) -> str:
+    pid = _safe_int(params_id)
+    if pid is None:
+        return "main"
+    mapping = _load_aircraft_params()
+    return str(mapping.get(str(pid), "main")).strip().lower() or "main"
+
+
+@lru_cache(maxsize=64)
+def _load_aircraft_icon_base(filename: str) -> Image.Image | None:
+    path = _aircraft_dir() / filename
+    if not path.exists():
+        return None
+    try:
+        return Image.open(path).convert("RGBA")
+    except Exception:
+        return None
+
+
+def _tint_icon(base: Image.Image, color: Tuple[int, int, int]) -> Image.Image:
+    alpha = base.getchannel("A")
+    tinted = Image.new("RGBA", base.size, (color[0], color[1], color[2], 0))
+    tinted.putalpha(alpha)
+    return tinted
+
+
+@lru_cache(maxsize=512)
+def _squadron_icon_image(
+    squadron_type: str,
+    color: Tuple[int, int, int],
+    size: int,
+    heading_bucket: int,
+    bucket_deg: float = 6.0,
+) -> Image.Image | None:
+    stype = str(squadron_type or "main").strip().lower()
+    filename = SQUADRON_TYPE_TO_ICON.get(stype, SQUADRON_TYPE_TO_ICON["main"])
+    base_icon = _load_aircraft_icon_base(filename)
+    if base_icon is None:
+        return None
+    tinted = _tint_icon(base_icon, color)
+    target = max(10, int(size))
+    scale = float(target) / max(tinted.width, tinted.height)
+    scaled = tinted.resize((max(1, int(tinted.width * scale)), max(1, int(tinted.height * scale))), Image.Resampling.LANCZOS)
+    heading_deg = (heading_bucket * bucket_deg) % 360.0
+    return scaled.rotate(-(heading_deg + AIRCRAFT_ICON_HEADING_OFFSET_DEG), resample=Image.Resampling.BICUBIC, expand=True)
 
 
 def _normalize_vehicle_code(raw: Any) -> str:
@@ -1988,6 +2068,178 @@ def _draw_torpedoes(
         wake = _to_px(x - dx * 18.0, z - dz * 18.0, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         draw.line([wake, back], fill=color, width=1)
         draw.polygon([front, right, back, left], fill=color, outline=(20, 20, 20))
+
+
+def _extract_squadron_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    events = (canonical.get("events", {}) or {}).get("squadrons", [])
+    if not isinstance(events, list):
+        return {}
+
+    tracks: Dict[str, Dict[str, Any]] = {}
+    for row in events:
+        if not isinstance(row, dict):
+            continue
+        squadron_id = _safe_int(row.get("squadron_id"))
+        if squadron_id is None:
+            continue
+        key = str(squadron_id)
+        track = tracks.setdefault(
+            key,
+            {
+                "squadron_id": squadron_id,
+                "team_side": str(row.get("team_side") or "unknown"),
+                "params_id": _safe_int(row.get("params_id")) or -1,
+                "type": str(row.get("squadron_type") or "").strip().lower(),
+                "points": [],
+                "times": [],
+                "visible_times": [],
+                "visible_values": [],
+                "removed_at": None,
+                "default_visible": True,
+            },
+        )
+        event = str(row.get("event") or "update").strip().lower()
+        t = float(row.get("time_s", 0.0) or 0.0)
+        if "team_side" in row and str(row.get("team_side") or ""):
+            track["team_side"] = str(row.get("team_side") or track["team_side"])
+        if row.get("params_id") is not None:
+            track["params_id"] = _safe_int(row.get("params_id")) or track.get("params_id", -1)
+        if row.get("squadron_type"):
+            track["type"] = str(row.get("squadron_type") or "").strip().lower()
+        if "visible" in row:
+            vis = bool(row.get("visible"))
+            track["visible_times"].append(t)
+            track["visible_values"].append(vis)
+            if event == "add":
+                track["default_visible"] = vis
+        if event == "remove":
+            track["removed_at"] = t
+            continue
+        if event in ("add", "update"):
+            x = row.get("x")
+            z = row.get("z")
+            if x is None or z is None:
+                continue
+            track["points"].append({"t": t, "x": float(x), "z": float(z)})
+
+    for track in tracks.values():
+        points = track.get("points", [])
+        points.sort(key=lambda item: float(item.get("t", 0.0)))
+        deduped: List[Dict[str, float]] = []
+        last = None
+        for p in points:
+            key = (round(float(p.get("t", 0.0)), 3), round(float(p.get("x", 0.0)), 2), round(float(p.get("z", 0.0)), 2))
+            if key == last:
+                continue
+            deduped.append(p)
+            last = key
+        track["points"] = deduped
+        track["times"] = [float(p.get("t", 0.0)) for p in deduped]
+        if not track.get("type"):
+            track["type"] = _squadron_type_from_params(track.get("params_id"))
+    return tracks
+
+
+def _squadron_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 6.0, max_gap_s: float = 4.0) -> Tuple[float, float] | None:
+    points = track.get("points", [])
+    times = track.get("times", [])
+    if not points or not times:
+        return None
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        return None
+    if idx >= len(points) - 1:
+        last_t = float(times[-1])
+        if (t - last_t) > max_stale_s:
+            return None
+        return float(points[-1]["x"]), float(points[-1]["z"])
+    p0 = points[idx]
+    p1 = points[idx + 1]
+    t0 = float(p0.get("t", 0.0))
+    t1 = float(p1.get("t", t0))
+    if t1 <= t0:
+        return float(p0.get("x", 0.0)), float(p0.get("z", 0.0))
+    if (t1 - t0) > max_gap_s:
+        if (t - t0) > max_stale_s:
+            return None
+        return float(p0.get("x", 0.0)), float(p0.get("z", 0.0))
+    ratio = max(0.0, min(1.0, (t - t0) / (t1 - t0)))
+    x = float(p0.get("x", 0.0)) + (float(p1.get("x", 0.0)) - float(p0.get("x", 0.0))) * ratio
+    z = float(p0.get("z", 0.0)) + (float(p1.get("z", 0.0)) - float(p0.get("z", 0.0))) * ratio
+    return x, z
+
+
+def _squadron_heading_at(track: Dict[str, Any], t: float) -> float | None:
+    points = track.get("points", [])
+    times = track.get("times", [])
+    if not points or not times or len(points) < 2:
+        return None
+    idx = bisect_right(times, t) - 1
+    if idx <= 0:
+        return None
+    idx = min(idx, len(points) - 1)
+    p0 = points[idx - 1]
+    p1 = points[idx]
+    dx = float(p1.get("x", 0.0)) - float(p0.get("x", 0.0))
+    dz = float(p1.get("z", 0.0)) - float(p0.get("z", 0.0))
+    dist = math.hypot(dx, dz)
+    if dist < 1e-6:
+        return None
+    return math.degrees(math.atan2(dx, dz)) % 360.0
+
+
+def _squadron_visible_at(track: Dict[str, Any], t: float) -> bool:
+    times = track.get("visible_times", [])
+    values = track.get("visible_values", [])
+    if not times or not values:
+        return bool(track.get("default_visible", True))
+    idx = bisect_right(times, t) - 1
+    if idx < 0:
+        return bool(track.get("default_visible", True))
+    idx = min(idx, len(values) - 1)
+    return bool(values[idx])
+
+
+def _draw_squadrons(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    squadron_tracks: Dict[str, Dict[str, Any]],
+    t: float,
+    half: float,
+    canvas_size: int,
+    margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
+) -> None:
+    if not squadron_tracks:
+        return
+    icon_size = max(10, canvas_size // 80)
+    for track in squadron_tracks.values():
+        removed_at = track.get("removed_at")
+        if removed_at is not None and t >= float(removed_at):
+            continue
+        side = str(track.get("team_side") or "unknown")
+        visible = _squadron_visible_at(track, t)
+        if side == "enemy" and not visible:
+            continue
+        pos = _squadron_position_at(track, t)
+        if pos is None:
+            continue
+        x, z = pos
+        px, py = _to_px(x, z, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        if side == "friendly":
+            color = COLOR_FRIENDLY
+        elif side == "enemy":
+            color = COLOR_ENEMY
+        else:
+            color = COLOR_UNKNOWN
+        heading = _squadron_heading_at(track, t)
+        heading_bucket = _heading_bucket(heading or 0.0, bucket_deg=6.0)
+        icon = _squadron_icon_image(track.get("type", "main"), color, icon_size, heading_bucket, bucket_deg=6.0)
+        if icon is not None:
+            img.paste(icon, (px - icon.width // 2, py - icon.height // 2), icon)
+        else:
+            draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=color, outline=(20, 20, 20))
 
 
 def _draw_artillery_traces(
@@ -3406,10 +3658,12 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     capture_timeline = _capture_timeline(canonical)
     capture_snapshot = _capture_snapshot_at(capture_timeline, battle_end)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
+    squadron_tracks = _extract_squadron_tracks(canonical)
     kill_feed = _extract_kill_feed(canonical)
 
     _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+    _draw_squadrons(img, draw, squadron_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
 
     ordered = sorted(render_tracks.items(), key=lambda kv: kv[1].get("team_side", "unknown"))
     for entity_key, track in ordered:
@@ -3506,6 +3760,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     capture_timeline = _capture_timeline(canonical)
     artillery_traces = _extract_artillery_traces(canonical)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
+    squadron_tracks = _extract_squadron_tracks(canonical)
     kill_feed = _extract_kill_feed(canonical)
     heading_memory: Dict[str, float] = {}
     ever_spotted_memory: Dict[str, bool] = {}
@@ -3525,6 +3780,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_squadrons(img, draw, squadron_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
 
         for entity_key, prepared in prepared_tracks.items():
             track = prepared["track"]

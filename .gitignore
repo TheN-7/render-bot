@@ -58,6 +58,23 @@ gui/*
 !gui/ships_silhouettes/**
 !gui/ship_dead_icons/
 !gui/ship_dead_icons/**
+!gui/service_kit/
+gui/service_kit/*
+!gui/service_kit/plane_types/
+!gui/service_kit/plane_types/icon_default_plane_torpedo.png
+!gui/service_kit/plane_types/icon_default_plane_torpedo_deepwater.png
+!gui/service_kit/plane_types/icon_default_plane_bomb_he.png
+!gui/service_kit/plane_types/icon_default_plane_bomb_ap.png
+!gui/service_kit/plane_types/icon_default_plane_skip_bomb_he.png
+!gui/service_kit/plane_types/icon_default_plane_skip_bomb_ap.png
+!gui/service_kit/plane_types/icon_default_plane_projectile.png
+!gui/service_kit/plane_types/icon_default_plane_projectile_ap.png
+!gui/service_kit/plane_types/icon_default_plane_fighter.png
+!gui/service_kit/plane_types/icon_default_asup_bomb_depthcharge.png
+!gui/service_kit/plane_types/icon_default_asup_mine.png
+
+
+
 
 !gui/spaces/
 !gui/spaces/00_CO_ocean/

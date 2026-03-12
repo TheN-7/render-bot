@@ -188,6 +188,15 @@ def _vec_xz(value: Any) -> tuple[float, float] | None:
         return None
 
 
+def _vec_xy(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    try:
+        return float(value[0]), float(value[1])
+    except Exception:
+        return None
+
+
 def _median_value(values: List[float]) -> float:
     if not values:
         return 0.0
@@ -606,18 +615,21 @@ def _extract_battle_overlay(
     player_status_timeline: List[Dict[str, Any]] = []
     artillery_shots: List[Dict[str, Any]] = []
     torpedo_points: List[Dict[str, Any]] = []
+    squadron_events: List[Dict[str, Any]] = []
     chat_messages: List[Dict[str, Any]] = []
     torpedo_params_by_owner: Dict[int, set[int]] = {}
     vehicle_kills: List[Dict[str, Any]] = []
     avatar_kills: List[Dict[str, Any]] = []
     seen_shots: set[tuple[int, int]] = set()
     seen_torp_points: set[tuple[int, int, float, float, float]] = set()
+    seen_squadron_points: set[tuple[int, float, float, float]] = set()
     seen_chat_messages: set[tuple[float, str, str]] = set()
     packet_time_ref = [0.0]
     next_sample_t = 0.0
     max_time = float(packets[-1].time) if packets else 0.0
     subscriptions_added: List[tuple[str, List[Any], Any]] = []
     local_player_name = str(context.engine_data.get("playerName") or "").strip()
+    squadron_meta: Dict[int, Dict[str, Any]] = {}
 
     def _sample_overlay_state(sample_t: float) -> None:
         snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, sample_t)
@@ -737,6 +749,78 @@ def _extract_battle_overlay(
         pos = _vec_xz(args[2])
         _append_torpedo_point(owner_id, torpedo_id, pos)
 
+    def _record_squadron_event(
+        event: str,
+        squadron_id: Optional[int],
+        pos: tuple[float, float] | None,
+        team_id: Optional[int] = None,
+        params_id: Optional[int] = None,
+        visible: Optional[bool] = None,
+    ) -> None:
+        if squadron_id is None:
+            return
+        sid = int(squadron_id)
+        meta = squadron_meta.setdefault(sid, {})
+        if team_id is not None:
+            meta["team_id"] = int(team_id)
+        if params_id is not None:
+            meta["params_id"] = int(params_id)
+        if visible is not None:
+            meta["visible"] = bool(visible)
+        x = z = None
+        if pos is not None:
+            x, z = pos
+        t = round(float(packet_time_ref[0]), 3)
+        if x is not None and z is not None:
+            dedup_key = (sid, t, round(x, 2), round(z, 2))
+            if dedup_key in seen_squadron_points:
+                return
+            seen_squadron_points.add(dedup_key)
+        squadron_events.append(
+            {
+                "time_s": t,
+                "event": event,
+                "squadron_id": sid,
+                "team_id": int(meta.get("team_id")) if _safe_int(meta.get("team_id")) is not None else -1,
+                "params_id": int(meta.get("params_id")) if _safe_int(meta.get("params_id")) is not None else -1,
+                "x": round(float(x), 3) if x is not None else None,
+                "z": round(float(z), 3) if z is not None else None,
+                "visible": bool(meta.get("visible", True)),
+            }
+        )
+
+    def _on_add_minimap_squadron(_entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if len(args) < 4:
+            return
+        squadron_id = _safe_int(args[0])
+        team_id = _safe_int(args[1])
+        params_id = _safe_int(args[2])
+        pos = _vec_xy(args[3])
+        visible = None
+        if len(args) > 4:
+            visible = bool(args[4])
+        _record_squadron_event("add", squadron_id, pos, team_id=team_id, params_id=params_id, visible=visible)
+
+    def _on_update_minimap_squadron(_entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if len(args) < 2:
+            return
+        squadron_id = _safe_int(args[0])
+        pos = _vec_xy(args[1])
+        _record_squadron_event("update", squadron_id, pos)
+
+    def _on_remove_minimap_squadron(_entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if not args:
+            return
+        squadron_id = _safe_int(args[0])
+        _record_squadron_event("remove", squadron_id, None)
+
+    def _on_squadron_visibility(_entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if len(args) < 2:
+            return
+        squadron_id = _safe_int(args[0])
+        visible = bool(_safe_int(args[1]) or 0)
+        _record_squadron_event("visibility", squadron_id, None, visible=visible)
+
     def _on_chat_message(_entity: Any, *args: Any, **_kwargs: Any) -> None:
         if len(args) < 2:
             return
@@ -790,6 +874,10 @@ def _extract_battle_overlay(
     _subscribe_method("Avatar_receiveArtilleryShots", _on_artillery_shots)
     _subscribe_method("Avatar_receiveTorpedoes", _on_torpedoes)
     _subscribe_method("Avatar_receiveTorpedoDirection", _on_torpedo_direction)
+    _subscribe_method("Avatar_receive_addMinimapSquadron", _on_add_minimap_squadron)
+    _subscribe_method("Avatar_receive_updateMinimapSquadron", _on_update_minimap_squadron)
+    _subscribe_method("Avatar_receive_removeMinimapSquadron", _on_remove_minimap_squadron)
+    _subscribe_method("Avatar_receive_squadronVisibilityChanged", _on_squadron_visibility)
     _subscribe_method("Avatar_chatMessage", _on_chat_message)
     _subscribe_method("Account_chatMessage", _on_chat_message)
     _subscribe_method("Vehicle_kill", _on_vehicle_kill)
@@ -1082,6 +1170,14 @@ def _extract_battle_overlay(
                 int(item.get("torpedo_id", -1)),
             ),
         ),
+        "squadrons": sorted(
+            squadron_events,
+            key=lambda item: (
+                float(item.get("time_s", 0.0)),
+                int(item.get("squadron_id", -1)),
+                str(item.get("event", "")),
+            ),
+        ),
         "kill_feed": sorted(kill_feed, key=lambda item: (float(item.get("time_s", 0.0)), int(item.get("victim_entity_id", -1)))),
         "chat_messages": sorted(chat_messages, key=lambda item: (float(item.get("time_s", 0.0)), str(item.get("sender", "")))),
         "secondary_artillery_groups": secondary_groups,
@@ -1337,6 +1433,7 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
         "control_points": len(battle_state.get("control_points", [])),
         "artillery_shots": len(battle_state.get("artillery_shots", [])),
         "torpedo_points": len(battle_state.get("torpedo_points", [])),
+        "squadron_events": len(battle_state.get("squadrons", [])),
         "kill_feed": len(battle_state.get("kill_feed", [])),
         "chat_messages": len(battle_state.get("chat_messages", [])),
         "secondary_artillery_groups": int(battle_state.get("secondary_artillery_groups", 0) or 0),
