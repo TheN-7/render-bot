@@ -13,7 +13,7 @@ import discord
 from discord import app_commands
 
 from core.minimap_data import load_canonical_data
-from minimap_render_v2 import auto_output_duration_s, render_minimap, speed_for_output_duration, stack_mp4_side_by_side
+from minimap_render_v2 import auto_output_duration_s, render_minimap, speed_for_output_duration, stack_mp4_side_by_side, QUALITY_SCALE
 
 LOG = logging.getLogger("render_bot")
 CONFIG_PATH = Path(__file__).resolve().with_name("bot_config.json")
@@ -31,7 +31,7 @@ ACTIVE_RENDER_TICKET: int | None = None
 NEXT_RENDER_TICKET = 1
 
 
-def _load_bot_token() -> str:
+def _load_bot_config() -> dict[str, Any]:
     try:
         raw = CONFIG_PATH.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
@@ -44,11 +44,38 @@ def _load_bot_token() -> str:
 
     if not isinstance(data, dict):
         raise SystemExit(f"{CONFIG_PATH.name} must contain a JSON object")
+    return data
+
+
+def _load_bot_token() -> str:
+    data = _load_bot_config()
 
     token = str(data.get("token", "") or "").strip()
     if not token:
         raise SystemExit(f"`token` is missing in {CONFIG_PATH.name}")
     return token
+
+
+def _render_settings() -> dict[str, Any]:
+    data = _load_bot_config()
+    profile = str(data.get("render_profile", "hosted") or "").strip().lower()
+    settings = {
+        "profile": profile,
+        "quality": float(data.get("render_quality", QUALITY_SCALE)),
+        "preset": str(data.get("render_preset", "slow")),
+        "crf": str(data.get("render_crf", "17")),
+        "fps": int(data.get("render_fps", DEFAULT_RENDER_FPS)),
+    }
+    if profile == "hosted":
+        if "render_quality" not in data:
+            settings["quality"] = 1.0
+        if "render_preset" not in data:
+            settings["preset"] = "fast"
+        if "render_crf" not in data:
+            settings["crf"] = "19"
+        if "render_fps" not in data:
+            settings["fps"] = DEFAULT_RENDER_FPS
+    return settings
 
 
 def _safe_name(filename: str) -> str:
@@ -444,6 +471,7 @@ async def render_command(
     try:
         ticket_id = await _enter_render_queue(interaction, filename, is_dual=False)
         started_at = time.monotonic()
+        settings = _render_settings()
         try:
             replay_bytes = await replay.read()
         except Exception as exc:
@@ -510,7 +538,7 @@ async def render_command(
                 output_length_s = auto_output_duration_s(canonical)
                 output_length_label = f"{int(round(output_length_s))}s"
                 battle_seconds = float((canonical.get("stats", {}) or {}).get("battle_end_s") or 0.0)
-                render_speed = speed_for_output_duration(battle_seconds, DEFAULT_RENDER_FPS, output_length_s)
+                render_speed = speed_for_output_duration(battle_seconds, settings["fps"], output_length_s)
 
                 out_mp4 = tmp / f"{stem}_minimap.mp4"
 
@@ -520,9 +548,12 @@ async def render_command(
                     canonical=canonical,
                     out_mp4=str(out_mp4),
                     size=DEFAULT_RENDER_SIZE,
-                    fps=DEFAULT_RENDER_FPS,
+                    fps=settings["fps"],
                     speed=render_speed,
                     target_duration_s=None,
+                    quality=float(settings["quality"]),
+                    mp4_preset=str(settings["preset"]),
+                    mp4_crf=str(settings["crf"]),
                     show_labels=True,
                     show_grid=True,
                     progress=_progress_callback,
@@ -602,6 +633,7 @@ async def render_dual_command(
     try:
         ticket_id = await _enter_render_queue(interaction, label, is_dual=True)
         started_at = time.monotonic()
+        settings = _render_settings()
         try:
             replay_a_bytes = await replay_a.read()
             replay_b_bytes = await replay_b.read()
@@ -684,7 +716,7 @@ async def render_dual_command(
                     float((canonical_a.get("stats", {}) or {}).get("battle_end_s") or 0.0),
                     float((canonical_b.get("stats", {}) or {}).get("battle_end_s") or 0.0),
                 )
-                render_speed = speed_for_output_duration(battle_seconds, DEFAULT_RENDER_FPS, output_length_s)
+                render_speed = speed_for_output_duration(battle_seconds, settings["fps"], output_length_s)
 
                 left_mp4 = tmp / f"{stem_a}_left.mp4"
                 right_mp4 = tmp / f"{stem_b}_right.mp4"
@@ -704,9 +736,12 @@ async def render_dual_command(
                     canonical=canonical_a,
                     out_mp4=str(left_mp4),
                     size=DUAL_RENDER_SIZE,
-                    fps=DEFAULT_RENDER_FPS,
+                    fps=settings["fps"],
                     speed=render_speed,
                     target_duration_s=None,
+                    quality=float(settings["quality"]),
+                    mp4_preset=str(settings["preset"]),
+                    mp4_crf=str(settings["crf"]),
                     show_labels=True,
                     show_grid=True,
                     progress=_progress_a,
@@ -717,9 +752,12 @@ async def render_dual_command(
                     canonical=canonical_b,
                     out_mp4=str(right_mp4),
                     size=DUAL_RENDER_SIZE,
-                    fps=DEFAULT_RENDER_FPS,
+                    fps=settings["fps"],
                     speed=render_speed,
                     target_duration_s=None,
+                    quality=float(settings["quality"]),
+                    mp4_preset=str(settings["preset"]),
+                    mp4_crf=str(settings["crf"]),
                     show_labels=True,
                     show_grid=True,
                     progress=_progress_b,
@@ -729,9 +767,11 @@ async def render_dual_command(
                     str(left_mp4),
                     str(right_mp4),
                     str(out_mp4),
-                    fps=DEFAULT_RENDER_FPS,
+                    fps=settings["fps"],
                     output_duration_s=output_length_s,
                     progress=_progress_callback,
+                    preset=str(settings["preset"]),
+                    crf=str(settings["crf"]),
                 )
                 await _set_progress("done", 1, 1)
                 await progress_task

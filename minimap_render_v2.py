@@ -17,16 +17,18 @@ from typing import Any, Callable, Dict, Tuple
 
 from core.minimap_data import load_canonical_data, canonical_to_legacy
 from renderers.minimap_renderer import estimate_animation_frame_count, iter_animation_frames, render_static, render_gif_frames
+from PIL import Image
 
 
 ProgressCallback = Callable[[str, int, int], None]
 PLAYBACK_DURATION_SCALE = 1.45
 MP4_CRF = "17"
 MP4_PRESET = "slow"
-AUTO_OUTPUT_MIN_S = 40.0
-AUTO_OUTPUT_MAX_S = 60.0
+AUTO_OUTPUT_MIN_S = 55.0
+AUTO_OUTPUT_MAX_S = 85.0
 AUTO_BATTLE_MAX_S = 1200.0
 DUAL_OUTPUT_MAX_WIDTH = 1920
+QUALITY_SCALE = 1.5
 
 
 def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
@@ -86,7 +88,27 @@ def _ffmpeg_executable() -> str | None:
         return None
 
 
-def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None = None, total_frames: int | None = None) -> None:
+def _downscale_frames(frames, scale: float):
+    if scale <= 1.01:
+        for frame in frames:
+            yield frame
+        return
+    for frame in frames:
+        target_w = max(1, int(round(frame.width / scale)))
+        target_h = max(1, int(round(frame.height / scale)))
+        yield frame.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+
+def _save_mp4(
+    frames,
+    out_mp4: str,
+    fps: int,
+    progress: ProgressCallback | None = None,
+    total_frames: int | None = None,
+    *,
+    preset: str | None = None,
+    crf: str | None = None,
+) -> None:
     iterator = iter(frames)
     try:
         first_frame = next(iterator)
@@ -101,6 +123,9 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
     def _emit(stage: str, current: int, total_count: int) -> None:
         if progress is not None:
             progress(stage, int(current), max(1, int(total_count)))
+
+    preset = str(preset or MP4_PRESET)
+    crf = str(crf or MP4_CRF)
 
     # Preferred path: imageio writer with higher-quality H.264 settings.
     try:
@@ -117,7 +142,7 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
             codec="libx264",
             macro_block_size=None,
             pixelformat="yuv420p",
-            output_params=["-crf", MP4_CRF, "-preset", MP4_PRESET, "-movflags", "+faststart"],
+            output_params=["-crf", crf, "-preset", preset, "-movflags", "+faststart"],
         )
         try:
             _emit("encoding", 0, total)
@@ -157,9 +182,9 @@ def _save_mp4(frames, out_mp4: str, fps: int, progress: ProgressCallback | None 
             "-c:v",
             "libx264",
             "-crf",
-            MP4_CRF,
+            crf,
             "-preset",
-            MP4_PRESET,
+            preset,
             "-movflags",
             "+faststart",
             "-pix_fmt",
@@ -197,11 +222,15 @@ def stack_mp4_side_by_side(
     fps: int,
     output_duration_s: float,
     progress: ProgressCallback | None = None,
+    preset: str | None = None,
+    crf: str | None = None,
 ) -> None:
     ffmpeg = _ffmpeg_executable()
     if not ffmpeg:
         raise RuntimeError("Dual MP4 export requires ffmpeg")
 
+    preset = str(preset or MP4_PRESET)
+    crf = str(crf or MP4_CRF)
     fps = max(1, int(fps))
     output_duration_s = max(1.0, float(output_duration_s))
     max_width = max(640, int(DUAL_OUTPUT_MAX_WIDTH))
@@ -234,9 +263,9 @@ def stack_mp4_side_by_side(
             "-c:v",
             "libx264",
             "-crf",
-            MP4_CRF,
+            crf,
             "-preset",
-            MP4_PRESET,
+            preset,
             "-movflags",
             "+faststart",
             "-pix_fmt",
@@ -266,6 +295,9 @@ def render_minimap(
     fps: int = 25,
     speed: float = 3.0,
     target_duration_s: float | None = None,
+    quality: float = QUALITY_SCALE,
+    mp4_preset: str | None = None,
+    mp4_crf: str | None = None,
     show_labels: bool = True,
     show_grid: bool = True,
     bg_color: Tuple[int, int, int] = (10, 20, 40),
@@ -292,6 +324,9 @@ def render_minimap(
             json.dump(legacy, f, indent=2)
 
     speed = _resolve_speed(canonical, fps, speed, target_duration_s)
+    quality = max(1.0, float(quality))
+    render_size = max(256, int(round(size * quality)))
+    scale = render_size / float(size)
     base = os.path.splitext(str(src))[0]
     mp4_path = out_mp4 or (base + "_minimap.mp4")
 
@@ -300,22 +335,33 @@ def render_minimap(
         progress("rendering", 0, total_frames)
     mp4_frames = iter_animation_frames(
         canonical,
-        canvas_size=size,
+        canvas_size=render_size,
         speed=speed,
         show_grid=show_grid,
     )
-    _save_mp4(mp4_frames, mp4_path, fps, progress=progress, total_frames=total_frames)
+    mp4_frames = _downscale_frames(mp4_frames, scale)
+    _save_mp4(
+        mp4_frames,
+        mp4_path,
+        fps,
+        progress=progress,
+        total_frames=total_frames,
+        preset=mp4_preset,
+        crf=mp4_crf,
+    )
     if progress is not None:
         progress("done", total_frames, total_frames)
 
     if out_png:
         img = render_static(
             canonical,
-            canvas_size=size,
+            canvas_size=render_size,
             show_labels=show_labels,
             show_grid=show_grid,
             bg_color=bg_color,
         )
+        if scale > 1.01:
+            img = img.resize((int(round(img.width / scale)), int(round(img.height / scale))), Image.Resampling.LANCZOS)
         img.save(out_png, dpi=(150, 150))
 
     if out_gif:
@@ -355,6 +401,9 @@ def main() -> None:
     parser.add_argument("--size", type=int, default=1024, help="Canvas size px")
     parser.add_argument("--fps", type=int, default=25, help="Output fps")
     parser.add_argument("--speed", type=float, default=3.0, help="Game-seconds per frame (lower = slower playback)")
+    parser.add_argument("--quality", type=float, default=QUALITY_SCALE, help="Supersampling scale (default: 1.5)")
+    parser.add_argument("--preset", default=None, help="FFmpeg preset (e.g. veryfast, fast, medium, slow)")
+    parser.add_argument("--crf", default=None, help="FFmpeg CRF value (e.g. 17..23)")
     parser.add_argument("--no-labels", action="store_true")
     parser.add_argument("--no-grid", action="store_true")
     parser.add_argument("--dump-json", default=None, help="Dump extracted JSON")
@@ -374,6 +423,9 @@ def main() -> None:
             size=args.size,
             fps=args.fps,
             speed=args.speed,
+            quality=args.quality,
+            mp4_preset=args.preset,
+            mp4_crf=args.crf,
             show_labels=not args.no_labels,
             show_grid=not args.no_grid,
             bg_color=bg,
