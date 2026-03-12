@@ -822,10 +822,39 @@ def _extract_battle_overlay(
         _record_squadron_event("visibility", squadron_id, None, visible=visible)
 
     def _on_chat_message(_entity: Any, *args: Any, **_kwargs: Any) -> None:
-        if len(args) < 2:
+        if not args:
             return
-        sender = str(args[0] or "").strip()
-        message = str(args[1] or "").strip()
+
+        def _coerce_text(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                try:
+                    return value.decode("utf-8", errors="ignore")
+                except Exception:
+                    return ""
+            if isinstance(value, str):
+                return value
+            return ""
+
+        sender = ""
+        message = ""
+
+        # Known patterns:
+        # - chatMessage: (sender, message)
+        # - onChatMessage: (player_id, sender, message, channel, ...)
+        if len(args) >= 3:
+            sender = _coerce_text(args[1]).strip()
+            message = _coerce_text(args[2]).strip()
+        if not sender or not message:
+            if len(args) >= 2:
+                sender = _coerce_text(args[0]).strip()
+                message = _coerce_text(args[1]).strip()
+        if not sender or not message:
+            texts = [ _coerce_text(v).strip() for v in args ]
+            texts = [t for t in texts if t]
+            if len(texts) >= 2:
+                sender, message = texts[0], texts[1]
         if not message:
             return
         time_s = round(float(packet_time_ref[0]), 3)
@@ -880,6 +909,8 @@ def _extract_battle_overlay(
     _subscribe_method("Avatar_receive_squadronVisibilityChanged", _on_squadron_visibility)
     _subscribe_method("Avatar_chatMessage", _on_chat_message)
     _subscribe_method("Account_chatMessage", _on_chat_message)
+    _subscribe_method("Avatar_onChatMessage", _on_chat_message)
+    _subscribe_method("Account_onChatMessage", _on_chat_message)
     _subscribe_method("Vehicle_kill", _on_vehicle_kill)
     _subscribe_method("Avatar_receiveVehicleDeath", _on_avatar_vehicle_death)
     try:
