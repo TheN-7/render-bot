@@ -115,7 +115,26 @@ def _save_mp4(
     except StopIteration as exc:
         raise RuntimeError("No frames were generated for MP4 export") from exc
 
+    def _even_dim(value: int) -> int:
+        if value % 2 == 0:
+            return value
+        return value + 1 if value <= 1 else value - 1
+
     frame_size = first_frame.size
+    target_w = _even_dim(frame_size[0])
+    target_h = _even_dim(frame_size[1])
+    if (target_w, target_h) != frame_size:
+        first_frame = first_frame.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+        def _resize_to_even(frames_iter):
+            for frame in frames_iter:
+                if frame.size != (target_w, target_h):
+                    yield frame.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                else:
+                    yield frame
+
+        iterator = _resize_to_even(iterator)
+        frame_size = (target_w, target_h)
     fps = max(1, int(fps))
     total = max(1, int(total_frames or 0))
     written = 0
