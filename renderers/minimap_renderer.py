@@ -3058,12 +3058,18 @@ def _draw_lineup_panel(
     _paste_sprite(img, _text_sprite("Enemy lineup", font_size, COLOR_ENEMY, shadow=(0, 0, 0), bold=True, stroke_width=1, stroke_fill=(0, 0, 0)), int(enemy_rect[0]) + 6, int(enemy_rect[1]) + 4)
 
     def _line_text(item: Dict[str, Any], rect: Tuple[Any, Any, Any, Any]) -> str:
-        num = _lineup_number_text(item.get("team_number_local"))
         ship_code = _ship_class_code(item.get("ship_id"))
         rect_w = max(120, int(rect[2]) - int(rect[0]))
-        max_len = max(8, min(20, (rect_w - 44) // max(6, font_size)))
-        name = _marker_name_text(item.get("player_name"), max_len=max_len)
-        return f"{num:>2} {ship_code} {name}"
+        max_len = max(8, min(22, (rect_w - 36) // max(6, font_size)))
+        ship_name = _marker_name_text(_ship_name(item.get("ship_id")), max_len=max_len)
+        player_name = _marker_name_text(item.get("player_name"), max_len=max_len)
+        if ship_name and player_name:
+            return f"{ship_code} {ship_name} / {player_name}"
+        if ship_name:
+            return f"{ship_code} {ship_name}"
+        if player_name:
+            return f"{ship_code} {player_name}"
+        return f"{ship_code}"
 
     def _is_sunk(item: Dict[str, Any]) -> bool:
         if current_t is None or death_times is None:
@@ -3698,7 +3704,7 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             ship_class,
             color,
             heading_deg,
-            track.get("player_name"),
+            _ship_name(track.get("ship_id")) or track.get("player_name"),
             size=8,
             sunk=sunk,
         )
@@ -3708,11 +3714,12 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
         if show_labels:
             player_name = track.get("player_name") or f"entity_{entity_key}"
             ship_name = _ship_name(track.get("ship_id"))
-            num_txt = _lineup_number_text(track.get("team_number_local"))
-            if ship_name:
-                label = f"#{num_txt} {player_name} {ship_class} {ship_name}"
+            if ship_name and player_name:
+                label = f"{ship_name} / {player_name}"
+            elif ship_name:
+                label = ship_name
             else:
-                label = f"#{num_txt} {player_name} {ship_class}"
+                label = player_name
             draw.text((ex + 8, ey - 8), str(label), fill=color, font=font)
 
     duration = int(battle_end)
@@ -3841,7 +3848,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 prepared["ship_class"],
                 color,
                 heading_deg,
-                track.get("player_name"),
+                _ship_name(track.get("ship_id")) or track.get("player_name"),
                 size=marker_size,
                 sunk=sunk,
             )
