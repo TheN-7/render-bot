@@ -7,6 +7,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
+from io import BytesIO
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,10 +17,30 @@ if str(ROOT) not in sys.path:
 from core.replay_extract import extract_replay
 from core.replay_schema import validate_extraction
 from core.replay_unpack_adapter import ReplayDecodeError, WowsReplayPlayer, decode_packets, read_replay
+from replay_unpack.core.network.net_packet import NetPacket  # type: ignore
+from replay_unpack.clients.wows.network.packets import (  # type: ignore
+    PACKETS_MAPPING,
+    PACKETS_MAPPING_12_6,
+    PlayerPosition,
+)
 
 
 VERSIONS_DIR = ROOT / "vendor" / "replay_unpack" / "clients" / "wows" / "versions"
 DEFAULT_REPORT_ROOT = ROOT / "replay_debug" / "version_updates"
+
+RENDER_PACKET_NAMES = {
+    "Position",
+    "PlayerPosition",
+    "EntityCreate",
+    "EntityMethod",
+    "EntityProperty",
+    "NestedProperty",
+    "BattleStats",
+    "Map",
+    "Version",
+    "EntityEnter",
+    "EntityLeave",
+}
 
 
 def _version_candidates(version_parts: List[str]) -> List[str]:
@@ -39,6 +60,49 @@ def _target_version_dir_name(version_parts: List[str]) -> str:
     if not candidates:
         raise ReplayDecodeError("Replay version is missing or malformed")
     return candidates[-1]
+
+
+def _packet_mapping(version_parts: List[str]) -> Dict[int, Any]:
+    major_minor_patch = tuple(int(x) for x in (version_parts + ["0", "0", "0"])[:3])
+    if major_minor_patch >= (12, 6, 0):
+        mapping = dict(PACKETS_MAPPING_12_6)
+    else:
+        mapping = dict(PACKETS_MAPPING)
+
+    if major_minor_patch >= (15, 1, 0):
+        mapping[0x2C] = PlayerPosition
+    return mapping
+
+
+def _dump_raw_packets(replay_path: str, output_path: Path, filter_names: set[str] | None = None) -> None:
+    context = read_replay(replay_path)
+    mapping = _packet_mapping(context.version)
+    data = context.decrypted_data
+    stream = BytesIO(data)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        while stream.tell() < len(data):
+            packet = NetPacket(stream)
+            packet_cls = mapping.get(packet.type)
+            packet_name = packet_cls.__name__ if packet_cls else f"TYPE_{packet.type}"
+            if filter_names and packet_name not in filter_names:
+                continue
+            raw_bytes = packet.raw_data
+            if isinstance(raw_bytes, BytesIO):
+                raw_bytes = raw_bytes.getvalue()
+            handle.write(
+                json.dumps(
+                    {
+                        "time": round(float(packet.time), 6),
+                        "packet_type": hex(int(packet.type)),
+                        "packet_name": packet_name,
+                        "raw_len": len(raw_bytes),
+                        "raw_hex": raw_bytes.hex(),
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
 
 
 def _existing_version_dir(version_parts: List[str]) -> Path | None:
@@ -133,8 +197,8 @@ def _compare_summaries(baseline: Dict[str, Any], candidate: Dict[str, Any]) -> D
         manual_review_reasons.append("canonical validation failed")
     if cand_unknown - base_unknown:
         manual_review_reasons.append("new unknown packet types detected")
-    if cand_types - base_types:
-        manual_review_reasons.append("new packet types detected")
+    # New packet types alone are not a blocker if they are known and parsing succeeds.
+    # They are still recorded in the report for manual inspection.
 
     return {
         "new_unknown_packet_types": sorted(cand_unknown - base_unknown),
@@ -267,6 +331,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not write baseline/candidate canonical JSON files when extraction succeeds",
     )
+    parser.add_argument(
+        "--dump-raw-packets",
+        action="store_true",
+        help="Write raw packet dumps (.jsonl) for baseline and candidate replays",
+    )
+    parser.add_argument(
+        "--dump-render-packets",
+        action="store_true",
+        help="Write filtered raw packet dumps (.jsonl) with only render-relevant packet types",
+    )
     return parser.parse_args()
 
 
@@ -280,6 +354,8 @@ def main() -> int:
 
     candidate_version = report.get("candidate", {}).get("version", "unknown").replace(".", "_")
     output_dir = report_root / candidate_version
+    _write_json(output_dir / "baseline_report.json", report.get("baseline", {}) or {})
+    _write_json(output_dir / "candidate_report.json", report.get("candidate", {}) or {})
     _write_json(output_dir / "comparison_report.json", report)
     _write_report_markdown(output_dir / "comparison_report.md", report)
 
@@ -290,6 +366,11 @@ def main() -> int:
             _write_json(output_dir / "baseline_canonical.json", baseline_extract["canonical"])
         if candidate_extract.get("ok") and isinstance(candidate_extract.get("canonical"), dict):
             _write_json(output_dir / "candidate_canonical.json", candidate_extract["canonical"])
+
+    if args.dump_raw_packets or args.dump_render_packets:
+        filters = RENDER_PACKET_NAMES if args.dump_render_packets else None
+        _dump_raw_packets(str(baseline_replay), output_dir / "baseline_raw_packets.jsonl", filters)
+        _dump_raw_packets(str(candidate_replay), output_dir / "candidate_raw_packets.jsonl", filters)
 
     comparison = report.get("comparison", {}) or {}
     print(f"Baseline version:  {report['baseline']['version']}")

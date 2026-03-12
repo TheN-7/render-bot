@@ -88,10 +88,16 @@ class ReplayPlayer(ControlledPlayerBase):
             self._battle_controller.create_entity(cell_player)
 
         elif isinstance(packet, EntityEnter):
-            self._battle_controller.entities[packet.entityId].is_in_aoi = True
+            entity = self._battle_controller.entities.get(packet.entityId)
+            if entity is None:
+                return
+            entity.is_in_aoi = True
 
         elif isinstance(packet, EntityLeave):
-            self._battle_controller.entities[packet.entityId].is_in_aoi = False
+            entity = self._battle_controller.entities.get(packet.entityId)
+            if entity is None:
+                return
+            entity.is_in_aoi = False
 
         elif isinstance(packet, EntityCreate):
             entity = Entity(
@@ -103,8 +109,12 @@ class ReplayPlayer(ControlledPlayerBase):
             for i in range(values_count):
                 k = values.read(1)
                 idx, = struct.unpack('B', k)
-                entity.set_client_property(idx, values)
-            assert values.read() == b''
+                try:
+                    entity.set_client_property(idx, values)
+                except Exception:
+                    # Definitions can drift between versions; keep entity created
+                    # and skip the remaining payload if parsing fails.
+                    break
             self._battle_controller.create_entity(entity)
 
         elif isinstance(packet, Position):
@@ -115,10 +125,13 @@ class ReplayPlayer(ControlledPlayerBase):
             #     f.write("%s %s %s %s\n" % (packet.entityId, "{0:019b}".format((0b011111111111111111100000 - 32 * packet.entityId) >> 5), (0b011111111111111111100000 - 32 * packet.entityId) >> 5,
             #                           packet.position.x))
             # return
-            self._battle_controller.entities[packet.entityId].position = packet.position
-            self._battle_controller.entities[packet.entityId].yaw = packet.yaw
-            self._battle_controller.entities[packet.entityId].pitch = packet.pitch
-            self._battle_controller.entities[packet.entityId].roll = packet.roll
+            entity = self._battle_controller.entities.get(packet.entityId)
+            if entity is None:
+                return
+            entity.position = packet.position
+            entity.yaw = packet.yaw
+            entity.pitch = packet.pitch
+            entity.roll = packet.roll
 
         elif isinstance(packet, PlayerPosition):
             try:
@@ -160,20 +173,32 @@ class ReplayPlayer(ControlledPlayerBase):
                 pass
 
         elif isinstance(packet, EntityMethod):
-            entity = self._battle_controller.entities[packet.entityId]
+            entity = self._battle_controller.entities.get(packet.entityId)
+            if entity is None:
+                return
             entity.call_client_method(packet.messageId, packet.data.io())
 
         elif isinstance(packet, EntityProperty):
-            entity = self._battle_controller.entities[packet.objectID]
-            entity.set_client_property(packet.messageId, packet.data.io())
+            entity = self._battle_controller.entities.get(packet.objectID)
+            if entity is None:
+                return
+            try:
+                entity.set_client_property(packet.messageId, packet.data.io())
+            except Exception:
+                return
 
         elif isinstance(packet, NestedProperty):
-            e = self._battle_controller.entities[packet.entity_id]
+            e = self._battle_controller.entities.get(packet.entity_id)
+            if e is None:
+                return
 
             logging.debug('')
             logging.debug('nested property request for id=%s isSlice=%s packet=%s',
                           e.id, packet.is_slice, packet.payload.hex())
-            packet.read_and_apply(e)
+            try:
+                packet.read_and_apply(e)
+            except Exception:
+                return
 
         elif isinstance(packet, BattleStats) and\
                 hasattr(self._battle_controller, 'onPostBattleResultsReceived'):

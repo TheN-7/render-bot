@@ -114,7 +114,11 @@ class Entity:
                     func(self, obj)
 
     def call_client_method(self, exposed_index: int, payload: BytesIO):
-        method = self._methods[exposed_index]
+        try:
+            method = self._methods[exposed_index]
+        except IndexError:
+            logging.debug('unknown method index %s for entity %s', exposed_index, self._spec.get_name())
+            return
         logging.debug('calling %s method %s', self._spec.get_name(), method)
         method_hash = self._spec.get_name() + '_' + method.get_name()
 
@@ -133,7 +137,11 @@ class Entity:
 
     def set_client_property(self, exposed_index, payload: BytesIO):
         logging.debug('requested property %s of entity %s', exposed_index, self._spec.get_name())
-        prop = self.client_properties[exposed_index]
+        try:
+            prop = self.client_properties[exposed_index]
+        except IndexError:
+            logging.debug('unknown client property index %s for entity %s', exposed_index, self._spec.get_name())
+            return
         logging.debug('setting %s client property %s', self._spec.get_name(), prop)
         value = prop.create_from_stream(payload)
         self.properties['client'][prop.get_name()] = value
@@ -149,17 +157,29 @@ class Entity:
 
     def set_client_property_internal(self, internal_index, payload: BytesIO):
         logging.debug('requested property %s of entity %s', internal_index, self._spec.get_name())
-        prop = self.client_properties_internal[internal_index]
+        try:
+            prop = self.client_properties_internal[internal_index]
+        except IndexError:
+            logging.debug('unknown internal client property index %s for entity %s', internal_index, self._spec.get_name())
+            return
         logging.debug('setting %s client property %s', self._spec.get_name(), prop)
         self.properties['client'][prop.get_name()] = prop.create_from_stream(payload)
 
     def set_cell_property(self, internal_index, payload: BytesIO):
-        prop = self.cell_properties[internal_index]
+        try:
+            prop = self.cell_properties[internal_index]
+        except IndexError:
+            logging.debug('unknown cell property index %s for entity %s', internal_index, self._spec.get_name())
+            return
         logging.debug('setting %s cell property %s', self._spec.get_name(), prop)
         self.properties['cell'][prop.get_name()] = prop.create_from_stream(payload)
 
     def set_base_property(self, internal_index, payload: BytesIO):
-        prop = self.base_properties[internal_index]
+        try:
+            prop = self.base_properties[internal_index]
+        except IndexError:
+            logging.debug('unknown base property index %s for entity %s', internal_index, self._spec.get_name())
+            return
         logging.debug('setting %s base property %s', self._spec.get_name(), prop)
         self.properties['base'][prop.get_name()] = prop.create_from_stream(payload)
 
