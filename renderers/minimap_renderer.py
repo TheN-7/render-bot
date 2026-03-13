@@ -49,6 +49,35 @@ SQUADRON_TYPE_TO_ICON = {
     "main": "icon_default_plane_projectile.png",
     "default": "icon_default_plane_projectile.png",
 }
+SQUADRON_TYPE_LABELS = {
+    "fighter": "Fighter",
+    "rocket": "Rocket",
+    "rocket_ap": "AP Rocket",
+    "torpedo": "Torpedo",
+    "torpedo_deepwater": "Deepwater Torp",
+    "bomber": "HE Bomber",
+    "bomber_ap": "AP Bomber",
+    "skip": "Skip Bomber",
+    "skip_ap": "AP Skip",
+    "asw": "ASW",
+    "asw_mine": "ASW Mine",
+    "main": "Aircraft",
+    "default": "Aircraft",
+}
+SQUADRON_LEGEND_ORDER = [
+    "fighter",
+    "rocket",
+    "rocket_ap",
+    "torpedo",
+    "torpedo_deepwater",
+    "bomber",
+    "bomber_ap",
+    "skip",
+    "skip_ap",
+    "asw",
+    "asw_mine",
+    "main",
+]
 AIRCRAFT_ICON_HEADING_OFFSET_DEG = -90.0
 LINEUP_CLASS_ORDER = {
     "Submarine": 0,
@@ -825,12 +854,65 @@ def _load_aircraft_params() -> Dict[str, str]:
     return {}
 
 
+def _map_aircraft_module_type(raw_type: Any) -> Optional[str]:
+    t = str(raw_type or "").strip().lower()
+    if not t:
+        return None
+    if "torpedo" in t:
+        if "deep" in t:
+            return "torpedo_deepwater"
+        return "torpedo"
+    if "skip" in t:
+        return "skip_ap" if "ap" in t else "skip"
+    if "attack" in t or "rocket" in t:
+        return "rocket_ap" if "ap" in t else "rocket"
+    if "dive" in t or "bomb" in t:
+        return "bomber_ap" if "ap" in t else "bomber"
+    if "fighter" in t:
+        return "fighter"
+    if "asw" in t:
+        return "asw"
+    return None
+
+
+@lru_cache(maxsize=1)
+def _load_aircraft_module_params() -> Dict[str, str]:
+    cache = _load_ship_cache()
+    mapping: Dict[str, str] = {}
+    if not isinstance(cache, dict):
+        return mapping
+    for ship_data in cache.values():
+        if not isinstance(ship_data, dict):
+            continue
+        modules_tree = ship_data.get("modules_tree", {})
+        if not isinstance(modules_tree, dict):
+            continue
+        for module_id, meta in modules_tree.items():
+            if not isinstance(meta, dict):
+                continue
+            stype = _map_aircraft_module_type(meta.get("type"))
+            if not stype:
+                continue
+            try:
+                key = str(int(module_id))
+            except Exception:
+                key = str(module_id)
+            mapping[key] = stype
+    return mapping
+
+
 def _squadron_type_from_params(params_id: Any) -> str:
     pid = _safe_int(params_id)
     if pid is None:
         return "main"
     mapping = _load_aircraft_params()
-    return str(mapping.get(str(pid), "main")).strip().lower() or "main"
+    lookup = str(pid)
+    mapped = str(mapping.get(lookup, "")).strip().lower()
+    if mapped:
+        return mapped
+    module_map = _load_aircraft_module_params()
+    mapped = str(module_map.get(lookup, "")).strip().lower()
+    return mapped or "main"
 
 
 @lru_cache(maxsize=64)
@@ -2200,6 +2282,96 @@ def _squadron_visible_at(track: Dict[str, Any], t: float) -> bool:
     return bool(values[idx])
 
 
+def _squadron_legend_types(squadron_tracks: Dict[str, Dict[str, Any]]) -> List[str]:
+    types: set[str] = set()
+    for track in squadron_tracks.values():
+        stype = str(track.get("type") or "").strip().lower()
+        if not stype:
+            stype = _squadron_type_from_params(track.get("params_id"))
+        if stype not in SQUADRON_TYPE_LABELS:
+            stype = "main"
+        types.add(stype)
+    ordered = [t for t in SQUADRON_LEGEND_ORDER if t in types]
+    for t in sorted(types):
+        if t not in ordered:
+            ordered.append(t)
+    return ordered
+
+
+def _legend_aircraft_icon(stype: str, size: int) -> Image.Image | None:
+    filename = SQUADRON_TYPE_TO_ICON.get(stype, SQUADRON_TYPE_TO_ICON["main"])
+    base_icon = _load_aircraft_icon_base(filename)
+    if base_icon is None:
+        return None
+    tinted = _tint_icon(base_icon, (230, 230, 230))
+    target = max(10, int(size))
+    scale = float(target) / max(tinted.width, tinted.height)
+    return tinted.resize((max(1, int(tinted.width * scale)), max(1, int(tinted.height * scale))), Image.Resampling.LANCZOS)
+
+
+def _draw_squadron_legend(
+    img: Image.Image,
+    squadron_tracks: Dict[str, Dict[str, Any]],
+    canvas_size: int,
+    margin: int,
+    map_rect: Tuple[int, int, int, int] | None = None,
+) -> None:
+    types = _squadron_legend_types(squadron_tracks)
+    if not types:
+        return
+
+    icon_size = max(10, canvas_size // 90)
+    font_size = max(10, canvas_size // 70)
+    padding = 6
+    row_gap = 4
+    label_color = (230, 230, 230)
+
+    title_sprite = _text_sprite("Squadrons", font_size, (200, 200, 200), shadow=(0, 0, 0), bold=True)
+    rows: List[Tuple[str, Image.Image | None, Image.Image | None]] = []
+    text_w = 0
+    for stype in types:
+        label = SQUADRON_TYPE_LABELS.get(stype, stype.title())
+        label_sprite = _text_sprite(label, font_size, label_color, shadow=(0, 0, 0))
+        icon_sprite = _legend_aircraft_icon(stype, icon_size)
+        if label_sprite is not None:
+            text_w = max(text_w, label_sprite.width)
+        rows.append((stype, icon_sprite, label_sprite))
+
+    row_h = max(icon_size, font_size) + row_gap
+    title_h = title_sprite.height + row_gap if title_sprite is not None else 0
+    panel_w = padding * 2 + icon_size + 8 + text_w
+    panel_h = padding * 2 + title_h + (row_h * len(rows) - row_gap if rows else 0)
+
+    if map_rect is None:
+        left = margin
+        top = margin
+        right = canvas_size - margin
+        bottom = canvas_size - margin
+    else:
+        left, top, right, bottom = [int(v) for v in map_rect]
+
+    x0 = max(left + 4, right - panel_w - 6)
+    y0 = max(top + 4, bottom - panel_h - 6)
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+    draw_rgba.rectangle([x0, y0, x0 + panel_w, y0 + panel_h], fill=(12, 16, 26, 185), outline=(45, 45, 45, 210))
+
+    y = y0 + padding
+    if title_sprite is not None:
+        _paste_sprite(img, title_sprite, x0 + padding, y)
+        y += title_h
+
+    for _, icon_sprite, label_sprite in rows:
+        if icon_sprite is not None:
+            ix = x0 + padding
+            iy = y + (row_h - icon_sprite.height) // 2
+            img.paste(icon_sprite, (ix, iy), icon_sprite)
+        if label_sprite is not None:
+            lx = x0 + padding + icon_size + 6
+            ly = y + (row_h - label_sprite.height) // 2
+            img.paste(label_sprite, (lx, ly), label_sprite)
+        y += row_h
+
+
 def _draw_squadrons(
     img: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -2213,7 +2385,7 @@ def _draw_squadrons(
 ) -> None:
     if not squadron_tracks:
         return
-    icon_size = max(10, canvas_size // 80)
+    icon_size = max(12, canvas_size // 75)
     for track in squadron_tracks.values():
         removed_at = track.get("removed_at")
         if removed_at is not None and t >= float(removed_at):
@@ -2235,7 +2407,12 @@ def _draw_squadrons(
             color = COLOR_UNKNOWN
         heading = _squadron_heading_at(track, t)
         heading_bucket = _heading_bucket(heading or 0.0, bucket_deg=6.0)
+        shadow = _squadron_icon_image(track.get("type", "main"), (0, 0, 0), icon_size + 2, heading_bucket, bucket_deg=6.0)
         icon = _squadron_icon_image(track.get("type", "main"), color, icon_size, heading_bucket, bucket_deg=6.0)
+        if shadow is not None:
+            shadow = shadow.copy()
+            shadow.putalpha(shadow.getchannel("A").point(lambda a: min(120, int(a * 0.55))))
+            img.paste(shadow, (px - shadow.width // 2 + 1, py - shadow.height // 2 + 1), shadow)
         if icon is not None:
             img.paste(icon, (px - icon.width // 2, py - icon.height // 2), icon)
         else:
@@ -3670,6 +3847,7 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadrons(img, draw, squadron_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+    _draw_squadron_legend(img, squadron_tracks, canvas_size, margin, map_rect=map_rect)
 
     ordered = sorted(render_tracks.items(), key=lambda kv: kv[1].get("team_side", "unknown"))
     for entity_key, track in ordered:
@@ -3788,6 +3966,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_squadrons(img, draw, squadron_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_squadron_legend(img, squadron_tracks, canvas_size, margin, map_rect=map_rect)
 
         for entity_key, prepared in prepared_tracks.items():
             track = prepared["track"]

@@ -75,7 +75,6 @@ gui/service_kit/*
 
 
 
-
 !gui/spaces/
 !gui/spaces/00_CO_ocean/
 !gui/spaces/01_solomon_islands/
@@ -128,6 +127,8 @@ gui/service_kit/*
 !gui/spaces/s13_WW2_OP2/
 !gui/spaces/s14_WW2_OP3/
 
+
+!ships.py
 # Debug outputs
 replay_debug/**/*.json
 
