@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 import math
+import os
+import json
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
@@ -183,6 +185,13 @@ def _vec_xz(value: Any) -> tuple[float, float] | None:
     if value is None:
         return None
     try:
+        if hasattr(value, "x") and hasattr(value, "z"):
+            return float(value.x), float(value.z)
+        if isinstance(value, dict):
+            x = value.get("x") if "x" in value else value.get("X")
+            z = value.get("z") if "z" in value else value.get("Z")
+            if x is not None and z is not None:
+                return float(x), float(z)
         return float(value[0]), float(value[2])
     except Exception:
         return None
@@ -475,6 +484,130 @@ def _snapshot_battle_state(
     }
 
 
+def _snapshot_smoke_state(entities: Dict[int, Any], time_s: float) -> Dict[str, Any] | None:
+    smokes: List[Dict[str, Any]] = []
+    seen: set[tuple[int, int, float, float, float]] = set()
+    for entity in entities.values():
+        try:
+            if entity.get_name() != "SmokeScreen":
+                continue
+        except Exception:
+            continue
+        props = entity.properties if hasattr(entity, "properties") else {}
+        client = props.get("client", {}) if isinstance(props, dict) else {}
+        cell = props.get("cell", {}) if isinstance(props, dict) else {}
+        base = props.get("base", {}) if isinstance(props, dict) else {}
+        prop_sources = [client, cell, base]
+
+        def _first_prop(keys: tuple[str, ...]) -> Any:
+            for key in keys:
+                for src in prop_sources:
+                    if isinstance(src, dict) and key in src:
+                        return src.get(key)
+            return None
+
+        duration_s = 0.0
+        end_time = None
+        duration_keys = (
+            "lifeTime",
+            "life_time",
+            "lifeDuration",
+            "life_duration",
+            "duration",
+            "cloudLifeTime",
+            "cloudDuration",
+            "cloud_lifetime",
+            "smokeLifeTime",
+            "smokeDuration",
+            "timeLeft",
+            "time_left",
+            "remainingTime",
+            "remaining_time",
+            "lifeTimeLeft",
+            "life_time_left",
+            "cloudTimeLeft",
+            "smokeTimeLeft",
+            "smoke_time_left",
+        )
+        value = _safe_float(_first_prop(duration_keys))
+        if value is not None and value > 0.0:
+            duration_s = float(value)
+
+        end_keys = ("endTime", "end_time", "expireTime", "expire_time", "deathTime", "death_time")
+        end_value = _safe_float(_first_prop(end_keys))
+        if end_value is not None and end_value > float(time_s):
+            end_time = float(end_value)
+            if duration_s <= 0.0 or (end_time - float(time_s)) < duration_s:
+                duration_s = max(0.0, end_time - float(time_s))
+
+        points = _first_prop(("points", "Points"))
+        if not isinstance(points, list) or not points:
+            continue
+        radius = _safe_float(_first_prop(("radius", "Radius")), 0.0)
+        bc_radius = _safe_float(_first_prop(("bcRadius", "BCRadius")), 0.0)
+        if radius <= 0.0 and bc_radius > 0.0:
+            radius = bc_radius
+        height = _safe_float(_first_prop(("height", "Height")), 0.0)
+        active_idx = _safe_int(_first_prop(("activePointIndex", "active_point_index", "activeIdx", "active_index")))
+        active_flag = _first_prop(("isActive", "active", "isVisible", "visible"))
+        for idx, point in enumerate(points):
+            pos = _vec_xz(point)
+            if pos is None:
+                continue
+            x, z = pos
+            point_duration = 0.0
+            point_start = None
+            point_end = None
+            if isinstance(point, dict):
+                for key in duration_keys:
+                    value = _safe_float(point.get(key))
+                    if value is not None and value > 0.0:
+                        point_duration = float(value)
+                        break
+                for key in ("time", "time_s", "startTime", "start_time", "spawnTime", "spawn_time"):
+                    value = _safe_float(point.get(key))
+                    if value is not None and value >= 0.0:
+                        point_start = float(value)
+                        break
+                for key in end_keys:
+                    value = _safe_float(point.get(key))
+                    if value is not None and value > float(time_s):
+                        point_end = float(value)
+                        if point_duration <= 0.0 or (point_end - float(time_s)) < point_duration:
+                            point_duration = max(0.0, point_end - float(time_s))
+                        break
+            key = (int(getattr(entity, "id", 0) or 0), int(idx), round(float(x), 2), round(float(z), 2), round(float(radius), 2))
+            if key in seen:
+                continue
+            seen.add(key)
+            active = bool(active_idx is None or idx <= int(active_idx))
+            if active_flag is not None:
+                active = bool(active_flag) and active
+            smokes.append(
+                {
+                    "entity_id": int(getattr(entity, "id", 0) or 0),
+                    "index": int(idx),
+                    "active": bool(active),
+                    "active_point_index": int(active_idx) if active_idx is not None else None,
+                    "x": round(float(x), 3),
+                    "z": round(float(z), 3),
+                    "radius": round(float(radius), 3),
+                    "height": round(float(height), 3),
+                    "duration_s": round(float(point_duration or duration_s), 3),
+                    "point_start": round(float(point_start), 3) if point_start is not None else None,
+                    "end_time": round(float(point_end or end_time), 3) if (point_end or end_time) is not None else None,
+                }
+            )
+
+    if not smokes:
+        return None
+    smokes.sort(key=lambda item: (int(item.get("entity_id", 0)), int(item.get("index", 0))))
+    return {
+        "time_s": round(float(time_s), 3),
+        "smokes": smokes,
+    }
+
+
 def _snapshot_health_state(entities: Dict[int, Any], time_s: float) -> Dict[str, Any] | None:
     vehicles: Dict[str, Dict[str, Any]] = {}
     for entity in entities.values():
@@ -618,6 +751,19 @@ def _extract_battle_overlay(
     replay_player = WowsReplayPlayer(context.version)
     cap_positions: Dict[int, Dict[str, Any]] = {}
     timeline: List[Dict[str, Any]] = []
+    smoke_timeline: List[Dict[str, Any]] = []
+    smoke_puffs: List[Dict[str, Any]] = []
+    smoke_births: Dict[tuple[int, int], float] = {}
+    smoke_last_seen: Dict[tuple[int, int], float] = {}
+    smoke_puff_by_key: Dict[tuple[int, int], Dict[str, Any]] = {}
+    smoke_present = False
+    smoke_last_idx: Dict[int, int] = {}
+    smoke_last_idx_change: Dict[int, float] = {}
+    smoke_debug_enabled = bool(os.getenv("RENDER_SMOKE_DEBUG"))
+    smoke_debug_limit = max(1, _safe_int(os.getenv("RENDER_SMOKE_DEBUG_LIMIT")) or 6)
+    smoke_debug: List[Dict[str, Any]] = []
+    smoke_debug_seen: set[int] = set()
+    smoke_debug_last_idx: Dict[int, int] = {}
     health_timeline: List[Dict[str, Any]] = []
     player_status_timeline: List[Dict[str, Any]] = []
     artillery_shots: List[Dict[str, Any]] = []
@@ -640,9 +786,135 @@ def _extract_battle_overlay(
     player_name_by_id: Dict[int, str] = {}
 
     def _sample_overlay_state(sample_t: float) -> None:
+        nonlocal smoke_present
         snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, sample_t)
         if snap is not None:
             timeline.append(snap)
+        smoke_snap = _snapshot_smoke_state(replay_player._battle_controller.entities, sample_t)
+        if smoke_debug_enabled:
+            for entity in replay_player._battle_controller.entities.values():
+                try:
+                    if entity.get_name() != "SmokeScreen":
+                        continue
+                except Exception:
+                    continue
+                entity_id = int(getattr(entity, "id", 0) or 0)
+                client = entity.properties.get("client", {}) if hasattr(entity, "properties") else {}
+                cell = entity.properties.get("cell", {}) if hasattr(entity, "properties") else {}
+                base = entity.properties.get("base", {}) if hasattr(entity, "properties") else {}
+                active_idx = _safe_int(client.get("activePointIndex")) if isinstance(client, dict) else None
+                if active_idx is not None:
+                    last_idx = smoke_debug_last_idx.get(entity_id)
+                    smoke_debug_last_idx[entity_id] = active_idx
+                    if last_idx is not None and last_idx == active_idx:
+                        continue
+                if entity_id in smoke_debug_seen and len(smoke_debug) >= smoke_debug_limit:
+                    continue
+                smoke_debug_seen.add(entity_id)
+
+                def _filter_props(props: Any) -> Dict[str, Any]:
+                    if not isinstance(props, dict):
+                        return {}
+                    keep: Dict[str, Any] = {}
+                    for k, v in props.items():
+                        lk = str(k).lower()
+                        if not any(token in lk for token in ("time", "life", "duration", "active", "point", "radius", "cloud", "smoke", "visible", "start", "end", "expire")):
+                            continue
+                        if isinstance(v, (int, float, str, bool)):
+                            keep[k] = v
+                        elif isinstance(v, list):
+                            keep[k] = v[:3]
+                        elif isinstance(v, dict):
+                            keep[k] = {kk: vv for kk, vv in v.items() if isinstance(vv, (int, float, str, bool))}
+                    return keep
+
+                points_sample = None
+                if isinstance(client, dict):
+                    pts = client.get("points")
+                    if isinstance(pts, list) and pts:
+                        first = pts[0]
+                        if isinstance(first, dict):
+                            points_sample = {"count": len(pts), "keys": sorted(first.keys())}
+                        else:
+                            points_sample = {"count": len(pts), "type": type(first).__name__}
+
+                smoke_debug.append(
+                    {
+                        "time_s": round(float(sample_t), 3),
+                        "entity_id": entity_id,
+                        "client": _filter_props(client),
+                        "cell": _filter_props(cell),
+                        "base": _filter_props(base),
+                        "points": points_sample,
+                    }
+                )
+        if smoke_snap is not None:
+            for smoke in smoke_snap.get("smokes", []):
+                if not isinstance(smoke, dict):
+                    continue
+                entity_id = _safe_int(smoke.get("entity_id")) or 0
+                index = _safe_int(smoke.get("index")) if _safe_int(smoke.get("index")) is not None else -1
+                key = (int(entity_id), int(index))
+                if not bool(smoke.get("active", True)):
+                    continue
+                active_idx = _safe_int(smoke.get("active_point_index"))
+                if active_idx is not None:
+                    last_idx = smoke_last_idx.get(int(entity_id))
+                    if last_idx is None or last_idx != int(active_idx):
+                        smoke_last_idx[int(entity_id)] = int(active_idx)
+                        smoke_last_idx_change[int(entity_id)] = float(sample_t)
+                smoke_last_seen[key] = float(sample_t)
+                existing = smoke_puff_by_key.get(key)
+                if existing is not None:
+                    new_duration = float(smoke.get("duration_s", 0.0) or 0.0)
+                    if new_duration > 0.0:
+                        prev_duration = float(existing.get("duration_s", 0.0) or 0.0)
+                        if prev_duration > 0.0 and new_duration < (prev_duration - 0.5):
+                            existing["duration_mode"] = "remaining"
+                        if existing.get("duration_mode") == "remaining":
+                            existing["end_time"] = round(float(sample_t + new_duration), 3)
+                        elif prev_duration <= 0.0 or new_duration < prev_duration:
+                            existing["duration_s"] = round(new_duration, 3)
+                    explicit_end = _safe_float(smoke.get("end_time"))
+                    if explicit_end is not None and explicit_end > float(existing.get("start_time", 0.0) or 0.0):
+                        existing["end_time"] = round(float(explicit_end), 3)
+                if key not in smoke_births:
+                    point_start = _safe_float(smoke.get("point_start"))
+                    if point_start is not None and point_start > 0.0 and point_start <= float(sample_t) + 1.0:
+                        start_time = float(point_start)
+                    else:
+                        start_time = float(sample_t)
+                    smoke_births[key] = start_time
+                    duration_s = float(smoke.get("duration_s", 0.0) or 0.0)
+                    point_end = _safe_float(smoke.get("end_time"))
+                    end_time = None
+                    if point_end is not None and point_end > start_time:
+                        end_time = float(point_end)
+                        if duration_s <= 0.0 or (end_time - start_time) < duration_s:
+                            duration_s = max(0.0, end_time - start_time)
+                    puff = {
+                        "entity_id": int(entity_id),
+                        "index": int(index),
+                        "x": float(smoke.get("x", 0.0) or 0.0),
+                        "z": float(smoke.get("z", 0.0) or 0.0),
+                        "radius": float(smoke.get("radius", 0.0) or 0.0),
+                        "height": float(smoke.get("height", 0.0) or 0.0),
+                        "start_time": round(float(start_time), 3),
+                        "duration_s": round(duration_s, 3),
+                        "end_time": round(end_time, 3) if end_time is not None else None,
+                        "duration_mode": "absolute",
+                    }
+                    smoke_puffs.append(puff)
+                    smoke_puff_by_key[key] = puff
+            if smoke_snap.get("smokes"):
+                smoke_present = True
+                smoke_timeline.append(smoke_snap)
+            elif smoke_present:
+                smoke_present = False
+                smoke_timeline.append({"time_s": round(float(sample_t), 3), "smokes": []})
+        elif smoke_present:
+            smoke_present = False
+            smoke_timeline.append({"time_s": round(float(sample_t), 3), "smokes": []})
         health_snap = _snapshot_health_state(replay_player._battle_controller.entities, sample_t)
         if health_snap is not None:
             health_timeline.append(health_snap)
@@ -1011,6 +1283,26 @@ def _extract_battle_overlay(
     if timeline and timeline[-1].get("time_s", 0.0) < max_time:
         _sample_overlay_state(max_time)
 
+    if smoke_puffs:
+        sample_step = 1.0
+        for puff in smoke_puffs:
+            if not isinstance(puff, dict):
+                continue
+            key = (int(puff.get("entity_id", 0) or 0), int(puff.get("index", -1) or -1))
+            start_time = float(puff.get("start_time", 0.0) or 0.0)
+            duration_s = float(puff.get("duration_s", 0.0) or 0.0)
+            last_seen = float(smoke_last_seen.get(key, start_time))
+            explicit_end = _safe_float(puff.get("end_time"))
+            if explicit_end is not None and explicit_end > start_time:
+                end_time = float(explicit_end)
+            elif duration_s > 0.0:
+                end_time = start_time + duration_s
+            elif int(puff.get("entity_id", 0) or 0) in smoke_last_idx_change:
+                end_time = float(smoke_last_idx_change[int(puff.get("entity_id", 0) or 0)]) + sample_step
+            else:
+                end_time = last_seen + sample_step
+            puff["end_time"] = round(end_time, 3)
+
     # Keep only state-changing snapshots.
     filtered: List[Dict[str, Any]] = []
     last_key = None
@@ -1039,7 +1331,37 @@ def _extract_battle_overlay(
             last_key = state_key
 
     filtered_health = _filter_health_timeline(health_timeline)
+    filtered_smokes: List[Dict[str, Any]] = []
+    last_smoke_key = None
+    for snap in smoke_timeline:
+        smokes = snap.get("smokes", []) if isinstance(snap, dict) else []
+        if not isinstance(smokes, list):
+            smokes = []
+        state_key = tuple(
+            (
+                int(s.get("entity_id", 0)),
+                int(s.get("index", 0)),
+                round(_safe_float(s.get("x"), 0.0), 2),
+                round(_safe_float(s.get("z"), 0.0), 2),
+                round(_safe_float(s.get("radius"), 0.0), 2),
+                int(bool(s.get("active", True))),
+            )
+            for s in smokes
+            if isinstance(s, dict)
+        )
+        if state_key != last_smoke_key:
+            filtered_smokes.append(snap)
+            last_smoke_key = state_key
     filtered_player_status = _filter_player_status_timeline(player_status_timeline)
+
+    if smoke_debug_enabled and smoke_debug:
+        try:
+            debug_path = Path(__file__).resolve().parent.parent / "content" / "smoke_debug.json"
+            debug_path.parent.mkdir(parents=True, exist_ok=True)
+            with debug_path.open("w", encoding="utf-8") as f:
+                json.dump(smoke_debug, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     layout_by_id: Dict[int, Dict[str, Any]] = {}
     for snap in filtered:
@@ -1235,6 +1557,8 @@ def _extract_battle_overlay(
 
     return {
         "captures_timeline": filtered,
+        "smoke_timeline": filtered_smokes,
+        "smoke_puffs": smoke_puffs,
         "health_timeline": filtered_health,
         "player_status_timeline": filtered_player_status,
         "player_status_meta": player_status_meta,
@@ -1518,6 +1842,7 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
         "squadron_events": len(battle_state.get("squadrons", [])),
         "kill_feed": len(battle_state.get("kill_feed", [])),
         "chat_messages": len(battle_state.get("chat_messages", [])),
+        "smoke_snapshots": len(battle_state.get("smoke_timeline", [])),
         "secondary_artillery_groups": int(battle_state.get("secondary_artillery_groups", 0) or 0),
         "secondary_artillery_dropped_shots": int(battle_state.get("secondary_artillery_dropped_shots", 0) or 0),
         "shell_kinds_resolved": int(battle_state.get("shell_kinds_resolved", 0) or 0),

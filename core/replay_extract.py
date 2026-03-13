@@ -96,6 +96,68 @@ def _normalize_capture_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
     return timeline
 
 
+def _normalize_smoke_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
+    if not isinstance(raw_timeline, list):
+        return []
+    timeline: list[Dict[str, Any]] = []
+    for row in raw_timeline:
+        if not isinstance(row, dict):
+            continue
+        smokes_raw = row.get("smokes", [])
+        smokes: list[Dict[str, Any]] = []
+        if isinstance(smokes_raw, list):
+            for smoke in smokes_raw:
+                if not isinstance(smoke, dict):
+                    continue
+                smokes.append(
+                    {
+                        "entity_id": _safe_int(smoke.get("entity_id")) or 0,
+                        "index": _safe_int(smoke.get("index")) if _safe_int(smoke.get("index")) is not None else -1,
+                        "x": float(smoke.get("x", 0.0) or 0.0),
+                        "z": float(smoke.get("z", 0.0) or 0.0),
+                        "radius": float(smoke.get("radius", 0.0) or 0.0),
+                        "height": float(smoke.get("height", 0.0) or 0.0),
+                        "active": bool(smoke.get("active", True)),
+                    }
+                )
+        smokes.sort(key=lambda item: (int(item.get("entity_id", 0)), int(item.get("index", 0))))
+        timeline.append(
+            {
+                "time_s": float(row.get("time_s", 0.0) or 0.0),
+                "smokes": smokes,
+            }
+        )
+    timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return timeline
+
+
+def _normalize_smoke_puffs(raw_puffs: Any) -> list[Dict[str, Any]]:
+    if not isinstance(raw_puffs, list):
+        return []
+    puffs: list[Dict[str, Any]] = []
+    for puff in raw_puffs:
+        if not isinstance(puff, dict):
+            continue
+        start_time = float(puff.get("start_time", puff.get("time_s", 0.0)) or 0.0)
+        duration_s = float(puff.get("duration_s", 0.0) or 0.0)
+        end_time = float(puff.get("end_time", start_time + duration_s) or 0.0)
+        puffs.append(
+            {
+                "entity_id": _safe_int(puff.get("entity_id")) or 0,
+                "index": _safe_int(puff.get("index")) if _safe_int(puff.get("index")) is not None else -1,
+                "x": float(puff.get("x", 0.0) or 0.0),
+                "z": float(puff.get("z", 0.0) or 0.0),
+                "radius": float(puff.get("radius", 0.0) or 0.0),
+                "height": float(puff.get("height", 0.0) or 0.0),
+                "start_time": round(start_time, 3),
+                "duration_s": round(duration_s, 3),
+                "end_time": round(end_time, 3),
+            }
+        )
+    puffs.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", 0)), int(item.get("index", 0))))
+    return puffs
+
+
 def _normalize_artillery_fires(raw_fires: Any) -> list[Dict[str, Any]]:
     if not isinstance(raw_fires, list):
         return []
@@ -371,6 +433,8 @@ def _build_canonical(extraction) -> Dict[str, Any]:
 
     battle_state = extraction.battle_state or {}
     captures_timeline = _normalize_capture_timeline(battle_state.get("captures_timeline", []))
+    smoke_timeline = _normalize_smoke_timeline(battle_state.get("smoke_timeline", []))
+    smoke_puffs = _normalize_smoke_puffs(battle_state.get("smoke_puffs", []))
     artillery_fires = _normalize_artillery_fires(battle_state.get("artillery_shots", []))
     torpedo_points = _normalize_torpedo_points(battle_state.get("torpedo_points", []), owner_team)
     kill_feed = _normalize_kill_feed(battle_state.get("kill_feed", []))
@@ -431,6 +495,8 @@ def _build_canonical(extraction) -> Dict[str, Any]:
         "events": {
             "deaths": sorted(deaths, key=lambda item: item["time_s"]),
             "captures": captures_timeline,
+            "smokes": smoke_timeline,
+            "smoke_puffs": smoke_puffs,
             "fires": artillery_fires,
             "kills": kill_feed,
             "chat": chat_feed,
@@ -452,6 +518,8 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "artillery_shots": len(artillery_fires),
             "torpedo_points": len(torpedo_points),
             "squadron_events": len(squadron_events),
+            "smoke_snapshots": len(smoke_timeline),
+            "smoke_puffs": len(smoke_puffs) if smoke_puffs else sum(len(s.get("smokes", [])) for s in smoke_timeline),
             "team_scores_final": final_scores,
             "team_win_score": team_win_score,
         },

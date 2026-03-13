@@ -90,6 +90,7 @@ SQUADRON_LEGEND_ORDER = [
     "main",
 ]
 AIRCRAFT_ICON_HEADING_OFFSET_DEG = 35.0
+DEFAULT_SMOKE_DURATION_S = 90.0
 LINEUP_CLASS_ORDER = {
     "Submarine": 0,
     "Destroyer": 1,
@@ -150,6 +151,16 @@ def _safe_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _median_value(values: List[int]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 0:
+        return (ordered[mid - 1] + ordered[mid]) / 2.0
+    return float(ordered[mid])
 
 
 @lru_cache(maxsize=64)
@@ -4035,6 +4046,95 @@ def _capture_timeline(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
     return timeline
 
 
+def _smoke_timeline(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    puffs = events.get("smoke_puffs", [])
+    if isinstance(puffs, list) and puffs:
+        has_timing = False
+        for puff in puffs:
+            if not isinstance(puff, dict):
+                continue
+            if float(puff.get("duration_s", 0.0) or 0.0) > 0.0:
+                has_timing = True
+                break
+            if puff.get("end_time") is not None:
+                has_timing = True
+                break
+        if not has_timing:
+            puffs = []
+    if isinstance(puffs, list) and puffs:
+        normalized: List[Dict[str, Any]] = []
+        for puff in puffs:
+            if not isinstance(puff, dict):
+                continue
+            start_time = float(puff.get("start_time", puff.get("time_s", 0.0)) or 0.0)
+            duration_s = float(puff.get("duration_s", 0.0) or 0.0)
+            if puff.get("end_time") is not None:
+                end_time = float(puff.get("end_time") or start_time)
+            elif duration_s > 0.0:
+                end_time = start_time + duration_s
+            else:
+                continue
+            normalized.append(
+                {
+                    **puff,
+                    "start_time": start_time,
+                    "duration_s": duration_s,
+                    "end_time": end_time,
+                }
+            )
+        normalized.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(_safe_int(item.get("entity_id")) or 0)))
+        return normalized
+    raw = events.get("smokes", [])
+    if not isinstance(raw, list):
+        return []
+    timeline: List[Dict[str, Any]] = []
+    for snap in raw:
+        if not isinstance(snap, dict):
+            continue
+        smokes_raw = snap.get("smokes", [])
+        smokes = smokes_raw if isinstance(smokes_raw, list) else []
+        timeline.append(
+            {
+                "time_s": float(snap.get("time_s", 0.0) or 0.0),
+                "smokes": smokes,
+            }
+        )
+    timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
+    return timeline
+
+
+def _smoke_snapshot_at(timeline: List[Dict[str, Any]], t: float) -> Optional[Dict[str, Any]]:
+    if not timeline:
+        return None
+    if isinstance(timeline[0], dict) and ("start_time" in timeline[0] or "end_time" in timeline[0]):
+        smokes: List[Dict[str, Any]] = []
+        for puff in timeline:
+            if not isinstance(puff, dict):
+                continue
+            start_time = float(puff.get("start_time", puff.get("time_s", 0.0)) or 0.0)
+            duration_s = float(puff.get("duration_s", 0.0) or 0.0)
+            if puff.get("end_time") is not None:
+                end_time = float(puff.get("end_time") or start_time)
+            elif duration_s > 0.0:
+                end_time = start_time + duration_s
+            else:
+                continue
+            if t + 1e-6 < start_time or t - 1e-6 > end_time:
+                continue
+            smokes.append(puff)
+        if not smokes:
+            return {"time_s": float(t), "smokes": []}
+        return {"time_s": float(t), "smokes": smokes}
+    last = timeline[0]
+    for snap in timeline:
+        if float(snap.get("time_s", 0.0)) <= t + 1e-6:
+            last = snap
+        else:
+            break
+    return last
+
+
 def _capture_snapshot_at(timeline: List[Dict[str, Any]], t: float) -> Optional[Dict[str, Any]]:
     if not timeline:
         return None
@@ -4494,12 +4594,15 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
         battle_end = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
     spot_timeout = 10.0
     capture_timeline = _capture_timeline(canonical)
+    smoke_timeline = _smoke_timeline(canonical)
     capture_snapshot = _capture_snapshot_at(capture_timeline, battle_end)
+    smoke_snapshot = _smoke_snapshot_at(smoke_timeline, battle_end)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
     squadron_tracks = _extract_squadron_tracks(canonical)
     kill_feed = _extract_kill_feed(canonical)
 
     _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+    _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadrons(img, draw, squadron_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadron_legend(img, squadron_tracks, canvas_size, margin, map_rect=map_rect)
@@ -4568,6 +4671,80 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     return img
 
 
+def _draw_smoke_overlay(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    snapshot: Optional[Dict[str, Any]],
+    half: float,
+    canvas_size: int,
+    margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
+) -> None:
+    if not snapshot or not isinstance(snapshot, dict):
+        return
+    smokes = snapshot.get("smokes", [])
+    if not isinstance(smokes, list) or not smokes:
+        return
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+
+    if world_bounds is None:
+        world_span = 2.0 * half
+    else:
+        world_span = max(float(world_bounds[1]) - float(world_bounds[0]), float(world_bounds[3]) - float(world_bounds[2]))
+    if map_rect is None:
+        usable_span = canvas_size - 2 * margin
+    else:
+        usable_span = min(int(map_rect[2]) - int(map_rect[0]), int(map_rect[3]) - int(map_rect[1]))
+
+    grouped: Dict[int, List[Dict[str, Any]]] = {}
+    for smoke in smokes:
+        if not isinstance(smoke, dict):
+            continue
+        entity_id = _safe_int(smoke.get("entity_id")) or 0
+        grouped.setdefault(entity_id, []).append(smoke)
+
+    for entity_id, items in grouped.items():
+        active_items = [s for s in items if bool(s.get("active", True))]
+        if not active_items:
+            continue
+        active_items.sort(key=lambda s: int(_safe_int(s.get("index")) or 0))
+        px_points: List[Tuple[int, int]] = []
+        radii: List[int] = []
+        for smoke in active_items:
+            x = float(smoke.get("x", 0.0) or 0.0)
+            z = float(smoke.get("z", 0.0) or 0.0)
+            radius_world = float(smoke.get("radius", 0.0) or 0.0)
+            px, py = _to_px(x, z, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+            if radius_world > 0.0:
+                radius_px = max(8, int(radius_world / max(1e-6, world_span) * usable_span * 0.92))
+            else:
+                radius_px = max(10, int(usable_span * 0.02))
+            px_points.append((int(px), int(py)))
+            radii.append(radius_px)
+
+        if not px_points:
+            continue
+
+        radius_px = int(_median_value(radii)) if radii else max(10, int(usable_span * 0.02))
+        alpha = 60
+        outline_alpha = 100
+        fill_color = (210, 210, 210, alpha)
+        ring_color = (220, 220, 220, outline_alpha)
+
+        if len(px_points) == 1:
+            px, py = px_points[0]
+            draw_rgba.ellipse([px - radius_px, py - radius_px, px + radius_px, py + radius_px], fill=fill_color)
+            draw_rgba.ellipse([px - radius_px, py - radius_px, px + radius_px, py + radius_px], outline=ring_color, width=1)
+            continue
+
+        # Draw continuous trail as a thick polyline, then round caps with circles.
+        draw_rgba.line(px_points, fill=fill_color, width=max(2, radius_px * 2))
+        for px, py in px_points:
+            draw_rgba.ellipse([px - radius_px, py - radius_px, px + radius_px, py + radius_px], fill=fill_color)
+        draw_rgba.line(px_points, fill=ring_color, width=max(1, int(radius_px * 0.4)))
+
+
 def estimate_animation_frame_count(canonical: Dict[str, Any], speed: float = 3.0) -> int:
     step = max(0.05, float(speed))
     max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
@@ -4598,6 +4775,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         max_clock = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
     spot_timeout = max(6.0, step * 1.5)
     capture_timeline = _capture_timeline(canonical)
+    smoke_timeline = _smoke_timeline(canonical)
     artillery_traces = _extract_artillery_traces(canonical)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
     squadron_tracks = _extract_squadron_tracks(canonical)
@@ -4617,7 +4795,9 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         img = base_frame.copy()
         draw = ImageDraw.Draw(img)
         capture_snapshot = _capture_snapshot_at(capture_timeline, t)
+        smoke_snapshot = _smoke_snapshot_at(smoke_timeline, t)
         _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_squadrons(img, draw, squadron_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
