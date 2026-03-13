@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import math
+import pickle
 import re
 import struct
+import sys
 import xml.etree.ElementTree as ET
+import zlib
 from bisect import bisect_right
 from functools import lru_cache
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -841,17 +845,168 @@ def _wg_tinted_icon(ship_type: str, color: Tuple[int, int, int], size: int) -> I
     return tinted
 
 
+def _value_attr(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _unwrap_gameparams_source(obj: Any) -> Dict[str, Any] | None:
+    if isinstance(obj, (list, tuple)):
+        for elem in obj:
+            if isinstance(elem, dict) and "" in elem and isinstance(elem[""], dict):
+                return elem[""]
+        return None
+    if isinstance(obj, dict) and "" in obj and isinstance(obj[""], dict):
+        return obj[""]
+    return None
+
+
+def _aircraft_params_from_gameparams_payload(payload: Any) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return mapping
+    for value in payload.values():
+        if not isinstance(value, dict):
+            continue
+        typeinfo = value.get("typeinfo")
+        if not isinstance(typeinfo, dict):
+            continue
+        if str(typeinfo.get("type") or "") != "Plane":
+            continue
+        plane_id = _safe_int(value.get("id")) or _safe_int(value.get("planeID"))
+        if plane_id is None:
+            continue
+        tokens = [
+            typeinfo.get("species"),
+            value.get("species"),
+            value.get("index"),
+            value.get("name"),
+        ]
+        text = " ".join(str(t) for t in tokens if t)
+        stype = _map_aircraft_module_type(text)
+        if stype:
+            mapping[str(plane_id)] = stype
+    return mapping
+
+
+def _aircraft_params_from_gameparams_json(path: Path) -> Dict[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="latin1"))
+    except Exception:
+        return {}
+    return _aircraft_params_from_gameparams_payload(payload)
+
+
+def _aircraft_params_from_gameparams_data(path: Path) -> Dict[str, str]:
+    if not path.exists():
+        return {}
+    # Allow pickle to resolve GameParams types used by WoWS.
+    try:
+        class GameParams(ModuleType):
+            class TypeInfo(object):
+                pass
+
+            class GPData(object):
+                pass
+
+        sys.modules[GameParams.__name__] = GameParams(GameParams.__name__)
+    except Exception:
+        return {}
+    try:
+        raw = path.read_bytes()
+        raw = struct.pack("B" * len(raw), *raw[::-1])
+        raw = zlib.decompress(raw)
+        obj = pickle.loads(raw, encoding="latin1")
+    except Exception:
+        return {}
+    source = _unwrap_gameparams_source(obj)
+    if not isinstance(source, dict):
+        return {}
+    mapping: Dict[str, str] = {}
+    for key, value in source.items():
+        typeinfo = _value_attr(value, "typeinfo")
+        if str(_value_attr(typeinfo, "type") or "") != "Plane":
+            continue
+        plane_id = _safe_int(_value_attr(value, "id")) or _safe_int(key)
+        if plane_id is None:
+            continue
+        tokens = [
+            _value_attr(typeinfo, "species"),
+            _value_attr(value, "species"),
+            _value_attr(value, "index"),
+            _value_attr(value, "name"),
+        ]
+        text = " ".join(str(t) for t in tokens if t)
+        stype = _map_aircraft_module_type(text)
+        if stype:
+            mapping[str(plane_id)] = stype
+    return mapping
+
+
+def _load_aircraft_params_from_gameparams() -> Dict[str, str]:
+    # Prefer a json export if present.
+    json_path = _battle_hud_dir() / "GameParams.json"
+    if json_path.exists():
+        mapping = _aircraft_params_from_gameparams_json(json_path)
+        if mapping:
+            return mapping
+    # Fallback to a decoded GameParams-0.json if present.
+    fallback_json = _root_dir() / "GameParams-0.json"
+    if fallback_json.exists():
+        mapping = _aircraft_params_from_gameparams_json(fallback_json)
+        if mapping:
+            return mapping
+    # Final fallback: decode GameParams.data directly.
+    data_path = _root_dir() / "content" / "GameParams.data"
+    return _aircraft_params_from_gameparams_data(data_path)
+
+
 @lru_cache(maxsize=1)
 def _load_aircraft_params() -> Dict[str, str]:
     params_path = _root_dir() / "aircraft_params.json"
+    mapping: Dict[str, str] = {}
     try:
         if params_path.exists():
             payload = json.loads(params_path.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
-                return {str(k): str(v) for k, v in payload.items() if str(v).strip()}
+                if "by_plane_id" in payload and isinstance(payload.get("by_plane_id"), dict):
+                    mapping.update({str(k): str(v) for k, v in payload["by_plane_id"].items() if str(v).strip()})
+                else:
+                    mapping.update({str(k): str(v) for k, v in payload.items() if str(v).strip()})
     except Exception:
-        return {}
-    return {}
+        mapping = {}
+
+    cache = _load_ship_cache()
+    cache_map = cache.get("__aircraft_params__") if isinstance(cache, dict) else None
+    if isinstance(cache_map, dict):
+        for key, value in cache_map.items():
+            if str(value).strip():
+                mapping.setdefault(str(key), str(value))
+
+    # If mapping is tiny, try to build it from GameParams data.
+    if len(mapping) < 20:
+        gp_mapping = _load_aircraft_params_from_gameparams()
+        if gp_mapping:
+            merged: Dict[str, str] = dict(gp_mapping)
+            merged.update(mapping)  # existing mappings win
+            mapping = merged
+            try:
+                existing_payload: Dict[str, Any] = {}
+                if params_path.exists():
+                    try:
+                        existing_payload = json.loads(params_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        existing_payload = {}
+                if isinstance(existing_payload, dict) and "by_cv" in existing_payload:
+                    payload = {"by_plane_id": mapping, "by_cv": existing_payload.get("by_cv")}
+                else:
+                    payload = {"by_plane_id": mapping}
+                params_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            except Exception:
+                pass
+
+    return mapping
 
 
 def _map_aircraft_module_type(raw_type: Any) -> Optional[str]:
@@ -881,9 +1036,81 @@ def _load_aircraft_module_params() -> Dict[str, str]:
     mapping: Dict[str, str] = {}
     if not isinstance(cache, dict):
         return mapping
+
+    def _module_ids(module: Any) -> Tuple[List[str], List[str]]:
+        ids: List[str] = []
+        names: List[str] = []
+        if not isinstance(module, dict):
+            return ids, names
+        if isinstance(module.get("ids"), list):
+            for mid in module.get("ids", []):
+                try:
+                    ids.append(str(int(mid)))
+                except Exception:
+                    continue
+        elif module.get("id") is not None:
+            try:
+                ids.append(str(int(module.get("id"))))
+            except Exception:
+                pass
+        if isinstance(module.get("names"), list):
+            names.extend([str(n) for n in module.get("names", []) if n is not None])
+        elif module.get("name"):
+            names.append(str(module.get("name")))
+        return ids, names
+
+    def _guess_fighter_kind(names: List[str]) -> str:
+        text = " ".join(names).lower()
+        rocket_tokens = ("rocket", "rockets", "hvar", "tiny tim", "tinytim", "ffar", "projectile")
+        if any(token in text for token in rocket_tokens):
+            return "rocket"
+        # Most CV "fighter" modules in ships_cache are rocket attack aircraft.
+        return "rocket"
+
+    def _infer_kind_from_names(names: List[str], fallback: str) -> str:
+        text = " ".join(names).lower()
+        if not text:
+            return fallback
+        if "torpedo" in text:
+            return "torpedo"
+        if "skip" in text:
+            return "skip"
+        if "dive" in text or "bomb" in text:
+            return "bomber"
+        if "rocket" in text or "hvar" in text or "tiny tim" in text or "ffar" in text or "projectile" in text:
+            return "rocket"
+        return fallback
+
     for ship_data in cache.values():
         if not isinstance(ship_data, dict):
             continue
+        modules = ship_data.get("modules")
+        if isinstance(modules, dict):
+            ids, names = _module_ids(modules.get("torpedo_bomber"))
+            kind = _infer_kind_from_names(names, "torpedo")
+            for mid in ids:
+                mapping[mid] = kind
+            ids, names = _module_ids(modules.get("dive_bomber"))
+            kind = _infer_kind_from_names(names, "bomber")
+            for mid in ids:
+                mapping[mid] = kind
+            ids, names = _module_ids(modules.get("bomber"))
+            kind = _infer_kind_from_names(names, "bomber")
+            for mid in ids:
+                mapping[mid] = kind
+            ids, names = _module_ids(modules.get("skip_bomber"))
+            kind = _infer_kind_from_names(names, "skip")
+            for mid in ids:
+                mapping[mid] = kind
+            ids, names = _module_ids(modules.get("fighter"))
+            if ids:
+                kind = _infer_kind_from_names(names, _guess_fighter_kind(names))
+                for mid in ids:
+                    mapping[mid] = kind
+            ids, _ = _module_ids(modules.get("rocket"))
+            for mid in ids:
+                mapping[mid] = "rocket"
+
         modules_tree = ship_data.get("modules_tree", {})
         if not isinstance(modules_tree, dict):
             continue
@@ -2219,7 +2446,69 @@ def _extract_squadron_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, A
         track["times"] = [float(p.get("t", 0.0)) for p in deduped]
         if not track.get("type"):
             track["type"] = _squadron_type_from_params(track.get("params_id"))
+
+    _assign_fallback_squadron_types(canonical, tracks)
     return tracks
+
+
+def _assign_fallback_squadron_types(canonical: Dict[str, Any], tracks: Dict[str, Dict[str, Any]]) -> None:
+    # If params_id mapping failed for some squadrons, try assigning types
+    # based on CV module availability and first-seen order.
+    if not tracks:
+        return
+
+    def _cv_types_for_team(team_side: str) -> List[str]:
+        # Build list of available types for the team's CV(s).
+        types: List[str] = []
+        for entry in (canonical.get("entities", {}) or {}).values():
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("team")) not in ("ally", "enemy", "player"):
+                continue
+            side = "friendly" if str(entry.get("team")) in ("ally", "player") else "enemy"
+            if side != team_side:
+                continue
+            ship_id = entry.get("ship_id")
+            if _ship_type(ship_id) != "AirCarrier":
+                continue
+            ship_entry = _ship_entry(ship_id)
+            modules = ship_entry.get("modules") if isinstance(ship_entry, dict) else {}
+            if not isinstance(modules, dict):
+                continue
+            if modules.get("fighter") or modules.get("rocket"):
+                types.append("rocket")
+            if modules.get("dive_bomber") or modules.get("bomber"):
+                types.append("bomber")
+            if modules.get("torpedo_bomber"):
+                types.append("torpedo")
+            if modules.get("skip_bomber"):
+                types.append("skip")
+        # Stable order.
+        ordered = [t for t in ("rocket", "bomber", "torpedo", "skip") if t in types]
+        return ordered
+
+    # Group unknown tracks by team side.
+    unknown_by_side: Dict[str, List[Dict[str, Any]]] = {"friendly": [], "enemy": [], "unknown": []}
+    for track in tracks.values():
+        stype = str(track.get("type") or "").strip().lower()
+        if stype and stype != "main":
+            continue
+        side = str(track.get("team_side") or "unknown")
+        unknown_by_side.setdefault(side, []).append(track)
+
+    for side, items in unknown_by_side.items():
+        if not items:
+            continue
+        # Sort by first seen time for stable assignment.
+        items.sort(key=lambda tr: float(tr.get("times", [0.0])[0] if tr.get("times") else 0.0))
+        available = _cv_types_for_team(side)
+        if not available:
+            continue
+        # Assign types by order of first appearance.
+        idx = 0
+        for track in items:
+            track["type"] = available[idx % len(available)]
+            idx += 1
 
 
 def _squadron_position_at(track: Dict[str, Any], t: float, max_stale_s: float = 6.0, max_gap_s: float = 4.0) -> Tuple[float, float] | None:
@@ -2385,7 +2674,7 @@ def _draw_squadrons(
 ) -> None:
     if not squadron_tracks:
         return
-    icon_size = max(12, canvas_size // 75)
+    icon_size = int(max(12, canvas_size // 75) * 1.25)
     for track in squadron_tracks.values():
         removed_at = track.get("removed_at")
         if removed_at is not None and t >= float(removed_at):
@@ -2393,7 +2682,12 @@ def _draw_squadrons(
         side = str(track.get("team_side") or "unknown")
         visible = _squadron_visible_at(track, t)
         if side == "enemy" and not visible:
-            continue
+            times = track.get("times", [])
+            if not times:
+                continue
+            last_t = float(times[-1])
+            if (t - last_t) > 2.5:
+                continue
         pos = _squadron_position_at(track, t)
         if pos is None:
             continue
@@ -2405,8 +2699,8 @@ def _draw_squadrons(
             color = COLOR_ENEMY
         else:
             color = COLOR_UNKNOWN
-        heading = _squadron_heading_at(track, t)
-        heading_bucket = _heading_bucket(heading or 0.0, bucket_deg=6.0)
+        # Keep squadron icons locked (no rotation).
+        heading_bucket = 0
         shadow = _squadron_icon_image(track.get("type", "main"), (0, 0, 0), icon_size + 2, heading_bucket, bucket_deg=6.0)
         icon = _squadron_icon_image(track.get("type", "main"), color, icon_size, heading_bucket, bucket_deg=6.0)
         if shadow is not None:
@@ -3619,8 +3913,15 @@ def _draw_capture_overlay(
                 continue
             caps_by_id[cap_id] = cap
 
-    if not control_points and caps_by_id:
-        control_points = list(caps_by_id.values())
+    if caps_by_id:
+        if control_points:
+            filtered = [cp for cp in control_points if _safe_int(cp.get("entity_id")) in caps_by_id]
+            if filtered:
+                control_points = filtered
+            else:
+                control_points = list(caps_by_id.values())
+        else:
+            control_points = list(caps_by_id.values())
 
     if not control_points:
         return

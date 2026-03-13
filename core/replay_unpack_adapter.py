@@ -192,6 +192,13 @@ def _vec_xy(value: Any) -> tuple[float, float] | None:
     if value is None:
         return None
     try:
+        if hasattr(value, "x") and hasattr(value, "y"):
+            return float(value.x), float(value.y)
+        if isinstance(value, dict):
+            x = value.get("x") if "x" in value else value.get("X")
+            y = value.get("y") if "y" in value else value.get("Y")
+            if x is not None and y is not None:
+                return float(x), float(y)
         return float(value[0]), float(value[1])
     except Exception:
         return None
@@ -630,6 +637,7 @@ def _extract_battle_overlay(
     subscriptions_added: List[tuple[str, List[Any], Any]] = []
     local_player_name = str(context.engine_data.get("playerName") or "").strip()
     squadron_meta: Dict[int, Dict[str, Any]] = {}
+    player_name_by_id: Dict[int, str] = {}
 
     def _sample_overlay_state(sample_t: float) -> None:
         snap = _snapshot_battle_state(replay_player._battle_controller.entities, cap_positions, sample_t)
@@ -654,6 +662,31 @@ def _extract_battle_overlay(
             Entity._methods_subscriptions[method_hash] = subscriptions
         subscriptions.append(callback)
         subscriptions_added.append((method_hash, subscriptions, callback))
+
+    def _refresh_player_names() -> None:
+        try:
+            info = replay_player.get_info()
+        except Exception:
+            return
+        if not isinstance(info, dict):
+            return
+        players_blob = info.get("players", {})
+        if isinstance(players_blob, dict):
+            rows = list(players_blob.values())
+        elif isinstance(players_blob, list):
+            rows = list(players_blob)
+        else:
+            rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+            for key in ("id", "accountDBID", "account_id", "db_id", "dbId", "playerId", "avatarId"):
+                pid = _safe_int(row.get(key))
+                if pid is not None and pid >= 0:
+                    player_name_by_id[pid] = name
 
     def _on_artillery_shots(_entity: Any, *args: Any, **_kwargs: Any) -> None:
         shot_packs = _iter_values(args[0]) if args else []
@@ -840,21 +873,39 @@ def _extract_battle_overlay(
         sender = ""
         message = ""
 
-        # Known patterns:
-        # - chatMessage: (sender, message)
-        # - onChatMessage: (player_id, sender, message, channel, ...)
-        if len(args) >= 3:
-            sender = _coerce_text(args[1]).strip()
-            message = _coerce_text(args[2]).strip()
-        if not sender or not message:
-            if len(args) >= 2:
-                sender = _coerce_text(args[0]).strip()
-                message = _coerce_text(args[1]).strip()
-        if not sender or not message:
-            texts = [ _coerce_text(v).strip() for v in args ]
-            texts = [t for t in texts if t]
-            if len(texts) >= 2:
-                sender, message = texts[0], texts[1]
+        sender_id = _safe_int(args[0]) if args else None
+        if sender_id is not None and sender_id not in player_name_by_id:
+            _refresh_player_names()
+        if sender_id is not None:
+            sender = player_name_by_id.get(sender_id, "")
+
+        channel_tokens = {
+            "battle_team",
+            "battle_all",
+            "battle_team_0",
+            "battle_team_1",
+            "battle_allies",
+            "battle_enemy",
+            "battle_common",
+            "team",
+            "global",
+        }
+        texts = [_coerce_text(v).strip() for v in args if isinstance(v, (str, bytes))]
+        texts = [t for t in texts if t and t.lower() not in channel_tokens]
+
+        if sender:
+            candidates = [t for t in texts if t != sender]
+            if candidates:
+                message = max(candidates, key=len)
+        if not message and texts:
+            message = max(texts, key=len)
+        if not sender:
+            for t in texts:
+                if t != message:
+                    sender = t
+                    break
+        if not sender and sender_id is not None:
+            sender = f"id_{sender_id}"
         if not message:
             return
         time_s = round(float(packet_time_ref[0]), 3)
