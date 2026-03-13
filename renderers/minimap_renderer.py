@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import pickle
 import re
 import struct
@@ -47,9 +48,11 @@ SQUADRON_TYPE_TO_ICON = {
     "skip_ap": "icon_default_plane_skip_bomb_ap.png",
     "rocket": "icon_default_plane_projectile.png",
     "rocket_ap": "icon_default_plane_projectile_ap.png",
-    "fighter": "icon_default_plane_fighter.png",
+    "fighter": "icon_default_plane_fighter_.png",
     "asw": "icon_default_asup_bomb_depthcharge.png",
     "asw_mine": "icon_default_asup_mine.png",
+    "airdrop": "icon_default_asup.png",
+    "airdrop_he": "icon_default_asup_bomb_he.png",
     "main": "icon_default_plane_projectile.png",
     "default": "icon_default_plane_projectile.png",
 }
@@ -65,6 +68,8 @@ SQUADRON_TYPE_LABELS = {
     "skip_ap": "AP Skip",
     "asw": "ASW",
     "asw_mine": "ASW Mine",
+    "airdrop": "Airdrop",
+    "airdrop_he": "HE Airdrop",
     "main": "Aircraft",
     "default": "Aircraft",
 }
@@ -78,11 +83,13 @@ SQUADRON_LEGEND_ORDER = [
     "bomber_ap",
     "skip",
     "skip_ap",
+    "airdrop",
+    "airdrop_he",
     "asw",
     "asw_mine",
     "main",
 ]
-AIRCRAFT_ICON_HEADING_OFFSET_DEG = -90.0
+AIRCRAFT_ICON_HEADING_OFFSET_DEG = 35.0
 LINEUP_CLASS_ORDER = {
     "Submarine": 0,
     "Destroyer": 1,
@@ -866,27 +873,168 @@ def _aircraft_params_from_gameparams_payload(payload: Any) -> Dict[str, str]:
     mapping: Dict[str, str] = {}
     if not isinstance(payload, dict):
         return mapping
+
+    def _collect_tokens(obj: Any, depth: int = 0, limit: int = 80) -> List[str]:
+        if obj is None or limit <= 0:
+            return []
+        tokens: List[str] = []
+        if isinstance(obj, bytes):
+            try:
+                text = obj.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                text = ""
+            if text:
+                tokens.append(text)
+            return tokens
+        if isinstance(obj, str):
+            text = obj.strip()
+            if text:
+                tokens.append(text)
+            return tokens
+        if depth >= 2:
+            return tokens
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if limit <= 0:
+                    break
+                tokens.extend(_collect_tokens(key, depth + 1, limit))
+                limit -= len(tokens)
+                if limit <= 0:
+                    break
+                tokens.extend(_collect_tokens(value, depth + 1, limit))
+                limit -= len(tokens)
+            return tokens
+        if isinstance(obj, (list, tuple, set)):
+            for item in obj:
+                if limit <= 0:
+                    break
+                tokens.extend(_collect_tokens(item, depth + 1, limit))
+                limit -= len(tokens)
+            return tokens
+        if hasattr(obj, "__dict__"):
+            try:
+                return _collect_tokens(vars(obj), depth + 1, limit)
+            except Exception:
+                return tokens
+        slots = getattr(obj, "__slots__", None)
+        if isinstance(slots, (list, tuple)):
+            slot_dict: Dict[str, Any] = {}
+            for name in slots:
+                try:
+                    slot_dict[name] = getattr(obj, name)
+                except Exception:
+                    continue
+            return _collect_tokens(slot_dict, depth + 1, limit)
+        # Last resort: use string representation if it looks informative.
+        try:
+            text = str(obj).strip()
+        except Exception:
+            text = ""
+        if text and "object at" not in text:
+            tokens.append(text)
+        return tokens
+
+    def _collect_int_refs(obj: Any, depth: int = 0, limit: int = 80, key_hint: str = "") -> List[int]:
+        if obj is None or limit <= 0:
+            return []
+        refs: List[int] = []
+        key_hint_l = str(key_hint).lower()
+        key_relevant = any(token in key_hint_l for token in ("plane", "squad", "air", "aircraft", "params", "id"))
+        if isinstance(obj, (int, float)) and key_relevant:
+            try:
+                refs.append(int(obj))
+            except Exception:
+                return refs
+            return refs
+        if isinstance(obj, str) and key_relevant:
+            try:
+                refs.append(int(obj))
+            except Exception:
+                return refs
+            return refs
+        if isinstance(obj, dict) and depth < 3:
+            for key, value in obj.items():
+                if limit <= 0:
+                    break
+                found = _collect_int_refs(value, depth + 1, limit, str(key))
+                refs.extend(found)
+                limit -= len(found)
+            return refs
+        if isinstance(obj, (list, tuple, set)) and depth < 3:
+            for item in obj:
+                if limit <= 0:
+                    break
+                found = _collect_int_refs(item, depth + 1, limit, key_hint)
+                refs.extend(found)
+                limit -= len(found)
+            return refs
+        if hasattr(obj, "__dict__") and depth < 3:
+            try:
+                for key, value in vars(obj).items():
+                    if limit <= 0:
+                        break
+                    found = _collect_int_refs(value, depth + 1, limit, str(key))
+                    refs.extend(found)
+                    limit -= len(found)
+            except Exception:
+                pass
+            return refs
+        slots = getattr(obj, "__slots__", None)
+        if isinstance(slots, (list, tuple)) and depth < 3:
+            for name in slots:
+                if limit <= 0:
+                    break
+                try:
+                    value = getattr(obj, name)
+                except Exception:
+                    continue
+                found = _collect_int_refs(value, depth + 1, limit, str(name))
+                refs.extend(found)
+                limit -= len(found)
+        return refs
+
+    allowed_types = {"Plane", "Squadron", "Aircraft", "AirGroup", "AirStrike"}
+    entries: List[Tuple[str, str, str, List[int]]] = []
+
     for value in payload.values():
         if not isinstance(value, dict):
             continue
         typeinfo = value.get("typeinfo")
         if not isinstance(typeinfo, dict):
             continue
-        if str(typeinfo.get("type") or "") != "Plane":
+        typeinfo_type = str(typeinfo.get("type") or "")
+        if typeinfo_type not in allowed_types:
             continue
         plane_id = _safe_int(value.get("id")) or _safe_int(value.get("planeID"))
         if plane_id is None:
             continue
-        tokens = [
-            typeinfo.get("species"),
-            value.get("species"),
-            value.get("index"),
-            value.get("name"),
-        ]
-        text = " ".join(str(t) for t in tokens if t)
+        tokens = _collect_tokens(typeinfo) + _collect_tokens(value)
+        text = " ".join(tok for tok in tokens if tok)
+        refs = _collect_int_refs(value) + _collect_int_refs(typeinfo)
+        entries.append((str(plane_id), typeinfo_type, text, refs))
+        _AIRCRAFT_PARAMS_DEBUG.setdefault(str(plane_id), {"typeinfo": typeinfo_type, "text": text, "refs": refs})
         stype = _map_aircraft_module_type(text)
         if stype:
             mapping[str(plane_id)] = stype
+    if entries:
+        module_map = _load_aircraft_module_params()
+        for entry_id, entry_type, _text, refs in entries:
+            if entry_id in mapping:
+                continue
+            if entry_type not in allowed_types:
+                continue
+            for ref in refs:
+                ref_key = str(ref)
+                mapped = mapping.get(ref_key)
+                if mapped:
+                    mapping[entry_id] = mapped
+                    _AIRCRAFT_PARAMS_DEBUG.setdefault(entry_id, {}).update({"linked_from": ref_key, "linked_kind": "plane"})
+                    break
+                mapped = module_map.get(ref_key)
+                if mapped:
+                    mapping[entry_id] = mapped
+                    _AIRCRAFT_PARAMS_DEBUG.setdefault(entry_id, {}).update({"linked_from": ref_key, "linked_kind": "module"})
+                    break
     return mapping
 
 
@@ -924,23 +1072,162 @@ def _aircraft_params_from_gameparams_data(path: Path) -> Dict[str, str]:
     if not isinstance(source, dict):
         return {}
     mapping: Dict[str, str] = {}
+    def _collect_tokens(obj: Any, depth: int = 0, limit: int = 80) -> List[str]:
+        if obj is None or limit <= 0:
+            return []
+        tokens: List[str] = []
+        if isinstance(obj, bytes):
+            try:
+                text = obj.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                text = ""
+            if text:
+                tokens.append(text)
+            return tokens
+        if isinstance(obj, str):
+            text = obj.strip()
+            if text:
+                tokens.append(text)
+            return tokens
+        if depth >= 2:
+            return tokens
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if limit <= 0:
+                    break
+                tokens.extend(_collect_tokens(key, depth + 1, limit))
+                limit -= len(tokens)
+                if limit <= 0:
+                    break
+                tokens.extend(_collect_tokens(value, depth + 1, limit))
+                limit -= len(tokens)
+            return tokens
+        if isinstance(obj, (list, tuple, set)):
+            for item in obj:
+                if limit <= 0:
+                    break
+                tokens.extend(_collect_tokens(item, depth + 1, limit))
+                limit -= len(tokens)
+            return tokens
+        if hasattr(obj, "__dict__"):
+            try:
+                return _collect_tokens(vars(obj), depth + 1, limit)
+            except Exception:
+                return tokens
+        slots = getattr(obj, "__slots__", None)
+        if isinstance(slots, (list, tuple)):
+            slot_dict: Dict[str, Any] = {}
+            for name in slots:
+                try:
+                    slot_dict[name] = getattr(obj, name)
+                except Exception:
+                    continue
+            return _collect_tokens(slot_dict, depth + 1, limit)
+        try:
+            text = str(obj).strip()
+        except Exception:
+            text = ""
+        if text and "object at" not in text:
+            tokens.append(text)
+        return tokens
+
+    def _collect_int_refs(obj: Any, depth: int = 0, limit: int = 80, key_hint: str = "") -> List[int]:
+        if obj is None or limit <= 0:
+            return []
+        refs: List[int] = []
+        key_hint_l = str(key_hint).lower()
+        key_relevant = any(token in key_hint_l for token in ("plane", "squad", "air", "aircraft", "params", "id"))
+        if isinstance(obj, (int, float)) and key_relevant:
+            try:
+                refs.append(int(obj))
+            except Exception:
+                return refs
+            return refs
+        if isinstance(obj, str) and key_relevant:
+            try:
+                refs.append(int(obj))
+            except Exception:
+                return refs
+            return refs
+        if isinstance(obj, dict) and depth < 3:
+            for key, value in obj.items():
+                if limit <= 0:
+                    break
+                found = _collect_int_refs(value, depth + 1, limit, str(key))
+                refs.extend(found)
+                limit -= len(found)
+            return refs
+        if isinstance(obj, (list, tuple, set)) and depth < 3:
+            for item in obj:
+                if limit <= 0:
+                    break
+                found = _collect_int_refs(item, depth + 1, limit, key_hint)
+                refs.extend(found)
+                limit -= len(found)
+            return refs
+        if hasattr(obj, "__dict__") and depth < 3:
+            try:
+                for key, value in vars(obj).items():
+                    if limit <= 0:
+                        break
+                    found = _collect_int_refs(value, depth + 1, limit, str(key))
+                    refs.extend(found)
+                    limit -= len(found)
+            except Exception:
+                pass
+            return refs
+        slots = getattr(obj, "__slots__", None)
+        if isinstance(slots, (list, tuple)) and depth < 3:
+            for name in slots:
+                if limit <= 0:
+                    break
+                try:
+                    value = getattr(obj, name)
+                except Exception:
+                    continue
+                found = _collect_int_refs(value, depth + 1, limit, str(name))
+                refs.extend(found)
+                limit -= len(found)
+        return refs
+
+    allowed_types = {"Plane", "Squadron", "Aircraft", "AirGroup", "AirStrike"}
+    entries: List[Tuple[str, str, str, List[int]]] = []
+
     for key, value in source.items():
         typeinfo = _value_attr(value, "typeinfo")
-        if str(_value_attr(typeinfo, "type") or "") != "Plane":
+        typeinfo_type = str(_value_attr(typeinfo, "type") or "")
+        if typeinfo_type not in allowed_types:
             continue
         plane_id = _safe_int(_value_attr(value, "id")) or _safe_int(key)
         if plane_id is None:
             continue
-        tokens = [
-            _value_attr(typeinfo, "species"),
-            _value_attr(value, "species"),
-            _value_attr(value, "index"),
-            _value_attr(value, "name"),
-        ]
-        text = " ".join(str(t) for t in tokens if t)
+        tokens = _collect_tokens(typeinfo) + _collect_tokens(value)
+        text = " ".join(tok for tok in tokens if tok)
+        refs = _collect_int_refs(value) + _collect_int_refs(typeinfo)
+        entries.append((str(plane_id), typeinfo_type, text, refs))
+        _AIRCRAFT_PARAMS_DEBUG.setdefault(str(plane_id), {"typeinfo": typeinfo_type, "text": text, "refs": refs})
         stype = _map_aircraft_module_type(text)
         if stype:
             mapping[str(plane_id)] = stype
+    if entries:
+        module_map = _load_aircraft_module_params()
+        for entry_id, entry_type, _text, refs in entries:
+            if entry_id in mapping:
+                continue
+            if entry_type not in allowed_types:
+                continue
+            for ref in refs:
+                ref_key = str(ref)
+                mapped = mapping.get(ref_key)
+                if mapped:
+                    mapping[entry_id] = mapped
+                    _AIRCRAFT_PARAMS_DEBUG.setdefault(entry_id, {}).update({"linked_from": ref_key, "linked_kind": "plane"})
+                    break
+                mapped = module_map.get(ref_key)
+                if mapped:
+                    mapping[entry_id] = mapped
+                    _AIRCRAFT_PARAMS_DEBUG.setdefault(entry_id, {}).update({"linked_from": ref_key, "linked_kind": "module"})
+                    break
     return mapping
 
 
@@ -966,23 +1253,24 @@ def _load_aircraft_params_from_gameparams() -> Dict[str, str]:
 def _load_aircraft_params() -> Dict[str, str]:
     params_path = _root_dir() / "aircraft_params.json"
     mapping: Dict[str, str] = {}
-    try:
-        if params_path.exists():
-            payload = json.loads(params_path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                if "by_plane_id" in payload and isinstance(payload.get("by_plane_id"), dict):
-                    mapping.update({str(k): str(v) for k, v in payload["by_plane_id"].items() if str(v).strip()})
-                else:
-                    mapping.update({str(k): str(v) for k, v in payload.items() if str(v).strip()})
-    except Exception:
-        mapping = {}
+    if os.environ.get("RENDER_AIRCRAFT_FORCE_GAMEPARAMS") != "1":
+        try:
+            if params_path.exists():
+                payload = json.loads(params_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    if "by_plane_id" in payload and isinstance(payload.get("by_plane_id"), dict):
+                        mapping.update({str(k): str(v) for k, v in payload["by_plane_id"].items() if str(v).strip()})
+                    else:
+                        mapping.update({str(k): str(v) for k, v in payload.items() if str(v).strip()})
+        except Exception:
+            mapping = {}
 
-    cache = _load_ship_cache()
-    cache_map = cache.get("__aircraft_params__") if isinstance(cache, dict) else None
-    if isinstance(cache_map, dict):
-        for key, value in cache_map.items():
-            if str(value).strip():
-                mapping.setdefault(str(key), str(value))
+        cache = _load_ship_cache()
+        cache_map = cache.get("__aircraft_params__") if isinstance(cache, dict) else None
+        if isinstance(cache_map, dict):
+            for key, value in cache_map.items():
+                if str(value).strip():
+                    mapping.setdefault(str(key), str(value))
 
     # If mapping is tiny, try to build it from GameParams data.
     if len(mapping) < 20:
@@ -1013,18 +1301,26 @@ def _map_aircraft_module_type(raw_type: Any) -> Optional[str]:
     t = str(raw_type or "").strip().lower()
     if not t:
         return None
+    # Detect AP in a token-safe way (avoid matching "japan" etc).
+    ap_flag = bool(re.search(r"(^|[^a-z])ap([^a-z]|$)", t)) or "armor piercing" in t or "armor_piercing" in t
+    # Prefer explicit fighter/rocket signals over torpedo/bomber to avoid
+    # misclassifying attack aircraft when other fields mention torpedoes.
+    if "fighter" in t:
+        return "fighter"
+    if "attack" in t or "rocket" in t:
+        return "rocket_ap" if ap_flag else "rocket"
+    if "airdrop" in t or "air drop" in t or "asup" in t:
+        return "airdrop_he" if "he" in t else "airdrop"
+    if "mine" in t:
+        return "asw_mine"
     if "torpedo" in t:
         if "deep" in t:
             return "torpedo_deepwater"
         return "torpedo"
     if "skip" in t:
-        return "skip_ap" if "ap" in t else "skip"
-    if "attack" in t or "rocket" in t:
-        return "rocket_ap" if "ap" in t else "rocket"
+        return "skip_ap" if ap_flag else "skip"
     if "dive" in t or "bomb" in t:
-        return "bomber_ap" if "ap" in t else "bomber"
-    if "fighter" in t:
-        return "fighter"
+        return "bomber_ap" if ap_flag else "bomber"
     if "asw" in t:
         return "asw"
     return None
@@ -1140,6 +1436,22 @@ def _squadron_type_from_params(params_id: Any) -> str:
     module_map = _load_aircraft_module_params()
     mapped = str(module_map.get(lookup, "")).strip().lower()
     return mapped or "main"
+
+
+def _squadron_type_with_source(params_id: Any) -> Tuple[str, str]:
+    pid = _safe_int(params_id)
+    if pid is None:
+        return "main", "none"
+    lookup = str(pid)
+    mapping = _load_aircraft_params()
+    mapped = str(mapping.get(lookup, "")).strip().lower()
+    if mapped:
+        return mapped, "aircraft_params"
+    module_map = _load_aircraft_module_params()
+    mapped = str(module_map.get(lookup, "")).strip().lower()
+    if mapped:
+        return mapped, "modules_tree"
+    return "main", "default"
 
 
 @lru_cache(maxsize=64)
@@ -2444,10 +2756,42 @@ def _extract_squadron_tracks(canonical: Dict[str, Any]) -> Dict[str, Dict[str, A
             last = key
         track["points"] = deduped
         track["times"] = [float(p.get("t", 0.0)) for p in deduped]
-        if not track.get("type"):
-            track["type"] = _squadron_type_from_params(track.get("params_id"))
+        mapped_type = _squadron_type_from_params(track.get("params_id"))
+        track["mapped_type"] = mapped_type
+        stype = str(track.get("type") or "").strip().lower()
+        if not stype or stype == "main":
+            track["type"] = mapped_type
 
     _assign_fallback_squadron_types(canonical, tracks)
+
+    if os.environ.get("RENDER_AIRCRAFT_DEBUG") == "1":
+        debug_entries: Dict[str, Dict[str, Any]] = {}
+        for track in tracks.values():
+            pid = _safe_int(track.get("params_id"))
+            if pid is None:
+                continue
+            key = str(pid)
+            if key in debug_entries:
+                continue
+            stype, source = _squadron_type_with_source(pid)
+            extra = _AIRCRAFT_PARAMS_DEBUG.get(key, {})
+            debug_entries[key] = {
+                "params_id": pid,
+                "mapped_type": stype,
+                "source": source,
+                "typeinfo": extra.get("typeinfo"),
+                "text": extra.get("text"),
+            }
+        payload = {
+            "tracks_count": len(tracks),
+            "entries": debug_entries,
+        }
+        try:
+            path = _root_dir() / "content" / "aircraft_params_debug.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except Exception:
+            pass
     return tracks
 
 
@@ -2699,10 +3043,11 @@ def _draw_squadrons(
             color = COLOR_ENEMY
         else:
             color = COLOR_UNKNOWN
+        stype = str(track.get("type") or track.get("mapped_type") or "main").strip().lower()
         # Keep squadron icons locked (no rotation).
         heading_bucket = 0
-        shadow = _squadron_icon_image(track.get("type", "main"), (0, 0, 0), icon_size + 2, heading_bucket, bucket_deg=6.0)
-        icon = _squadron_icon_image(track.get("type", "main"), color, icon_size, heading_bucket, bucket_deg=6.0)
+        shadow = _squadron_icon_image(stype, (0, 0, 0), icon_size + 2, heading_bucket, bucket_deg=6.0)
+        icon = _squadron_icon_image(stype, color, icon_size, heading_bucket, bucket_deg=6.0)
         if shadow is not None:
             shadow = shadow.copy()
             shadow.putalpha(shadow.getchannel("A").point(lambda a: min(120, int(a * 0.55))))
@@ -2711,6 +3056,15 @@ def _draw_squadrons(
             img.paste(icon, (px - icon.width // 2, py - icon.height // 2), icon)
         else:
             draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=color, outline=(20, 20, 20))
+
+        if os.environ.get("RENDER_AIRCRAFT_DEBUG") == "1":
+            pid = _safe_int(track.get("params_id"))
+            label = stype[:4] if stype else "unk"
+            if pid is not None:
+                label = f"{label}:{str(pid)[-4:]}"
+            sprite = _text_sprite(label, max(9, icon_size // 2), (230, 230, 230), shadow=(0, 0, 0))
+            if sprite is not None:
+                img.paste(sprite, (px + icon_size // 2 + 2, py - sprite.height // 2), sprite)
 
 
 def _draw_artillery_traces(
@@ -4363,3 +4717,4 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
 
 def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True) -> List[Image.Image]:
     return list(iter_animation_frames(canonical, canvas_size=canvas_size, speed=speed, show_grid=show_grid))
+_AIRCRAFT_PARAMS_DEBUG: Dict[str, Dict[str, Any]] = {}

@@ -1,1738 +1,851 @@
 {
-  "by_cv": {
-    "3256858064": {
-      "name": "Admiral Orlov",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3347819984",
-          "name": "Lavochkin La-9",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3348049360",
-          "name": "Polikarpov VIT-2 (VK-107)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3256858416": {
-      "name": "Otto Lilienthal",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3351129904",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3350966064",
-          "name": "Me 155G",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3351195440",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3330258928": {
-      "name": "Pi\u00f1atapolis",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3314495472",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3314266096",
-          "name": "F8F Bearcat\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3314429936",
-          "name": "TB2D Skypirate",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3333404368": {
-      "name": "[Hakury\u016b]",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3272552144",
-          "name": "J5N Tenrai\nType 91 mod. 7",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3273371344",
-          "name": "A7M Repp\u016b",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3272486608",
-          "name": "J5N Tenrai",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3273535184",
-          "name": "A7M Repp\u016b",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3273600720",
-          "name": "C6N Saiun",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3272322768",
-          "name": "A8M Rikuf\u016b",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "3335501808": {
-      "name": "[Midway]",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3272552432",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3272323056",
-          "name": "F8F Bearcat\nHVAR 127-mm",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3273371632",
-          "name": "F4U Corsair",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3273535472",
-          "name": "AD-1 Skyraider",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3271274480",
-          "name": "F8F Bearcat\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3272486896",
-          "name": "BTD Destroyer",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3273601008",
-          "name": "AD-1 Skyraider",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3340744496": {
-      "name": "S\u00fcsshofen",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3327012656",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3326848816",
-          "name": "Me 155G",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3327078192",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3340744656": {
-      "name": "[Audacious]",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3337498576",
-          "name": "Wyvern",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3337564112",
-          "name": "Wyvern",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3338383312",
-          "name": "Firebrand",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3338547152",
-          "name": "Firebrand",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3337334736",
-          "name": "Wyvern",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3338612688",
-          "name": "Firebrand",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3353327600": {
-      "name": "AL Hornet",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3466538992",
-          "name": "Douglas TBD\u00a0Devastator",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3466473456",
-          "name": "Douglas SBD-5",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3542071248": {
-      "name": "Theseus",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3533647824",
-          "name": "Sea Hornet",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3550459216": {
-      "name": "Independencia",
-      "nation": "pan_america",
-      "planes": [
-        {
-          "id": "3539938640",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3539709264",
-          "name": "F8F Bearcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "3550459600": {
-      "name": "Shinano",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3340644048",
-          "name": "Aichi B7A2",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3340709584",
-          "name": "Aichi B7A2",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3550459856": {
-      "name": "Ocean",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3529453520",
-          "name": "Fairey Barracuda\u00a0MkV",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3529387984",
-          "name": "Fairey Barracuda\u00a0MkV",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3529224144",
-          "name": "Vought Corsair\u00a0MkIV",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "3655317296": {
-      "name": "Max Immelmann",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3298766640",
-          "name": "Fw 190G8",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3667899856": {
-      "name": "Chkalov\u00a0B",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3560844752",
-          "name": "Sukhoi Su-2",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3560910288",
-          "name": "Polikarpov VIT-2 (VK-107)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3667900112": {
-      "name": "Kaga B",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3555667664",
-          "name": "B6N Tenzan",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3555602128",
-          "name": "D4Y3 Suisei",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3555438288",
-          "name": "A6M5 Zero",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 8
-    },
-    "3667900208": {
-      "name": "Graf Zeppelin B",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3554553648",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3557535536",
-          "name": "Me 155A",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3555667760",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3667900400": {
-      "name": "Saipan B",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3547213808",
-          "name": "BTD Destroyer",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3549376496",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3552292848",
-          "name": "F8F Bearcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 8
-    },
-    "3730814960": {
-      "name": "Hornet",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3552522224",
-          "name": "Douglas TBD\u00a0Devastator",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3546165232",
-          "name": "Douglas SBD-5",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3741300688": {
-      "name": "Colossus",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3556650960",
-          "name": "Fairey Barracuda\u00a0MkV",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3556487120",
-          "name": "Vought Corsair\u00a0MkIV",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3556716496",
-          "name": "Fairey Barracuda\u00a0MkV",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3741300720": {
-      "name": "Saipan",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3768528880",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3767250928",
-          "name": "F8F Bearcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3768463344",
-          "name": "BTD Destroyer",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3751786192": {
-      "name": "Kaga",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "4281282256",
-          "name": "B6N Tenzan",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "4270567120",
-          "name": "A6M5 Zero",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "4282265296",
-          "name": "D4Y3 Suisei",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3751786288": {
-      "name": "Graf Zeppelin",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3557764912",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3557699376",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3558584112",
-          "name": "Me 155A",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 8
-    },
-    "3751786448": {
-      "name": "Ark Royal",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3767414736",
-          "name": "Swordfish",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3767250896",
-          "name": "Skua",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3767480272",
-          "name": "Swordfish",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "3751786480": {
-      "name": "Enterprise",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3554553840",
-          "name": "SB2C Helldiver",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3556487152",
-          "name": "F6F Hellcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3555667952",
-          "name": "TBF Avenger",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3760174896": {
-      "name": "Werner Voss",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3297718064",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3298537264",
-          "name": "Fw 190A8",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "3760175056": {
-      "name": "Malta",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3349098448",
-          "name": "Blackburn Firebrand",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3348869072",
-          "name": "Blackburn Firebrand",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3349032912",
-          "name": "Blackburn Firebrand",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "3760175088": {
-      "name": "Franklin D. Roosevelt",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3343790064",
-          "name": "TB2D Skypirate",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3343855600",
-          "name": "TB2D Skypirate",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3343626224",
-          "name": "TB2D Skypirate",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "3762271440": {
-      "name": "Sanzang",
-      "nation": "pan_asia",
-      "planes": [
-        {
-          "id": "3559632080",
-          "name": "F8F Bearcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3559795920",
-          "name": "BTD Destroyer",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3559861456",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3762271696": {
-      "name": "Chkalov",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3559861712",
-          "name": "Polikarpov VIT-2 (VK-107)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3559796176",
-          "name": "Sukhoi Su-2",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "3762271984": {
-      "name": "Aquila",
-      "nation": "italy",
-      "planes": [
-        {
-          "id": "3560910576",
-          "name": "Reggiane Re.2001",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3560681200",
-          "name": "Reggiane Re.2001",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 8
-    },
-    "3762272208": {
-      "name": "Indomitable",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3557699536",
-          "name": "Sea Hornet",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3557535696",
-          "name": "Sea Hornet",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 8
-    },
-    "3764369200": {
-      "name": "Erich Loewenhardt",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3767250736",
-          "name": "Bf 109T",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3767414576",
-          "name": "Ju 87C",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3767480112",
-          "name": "Ju 87C",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "3764369232": {
-      "name": "B\u00e9arn",
-      "nation": "france",
-      "planes": [
-        {
-          "id": "3769511760",
-          "name": "Vought V-156F",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "4074747856": {
-      "name": "Audacious",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3350081488",
-          "name": "Firebrand",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3349917648",
-          "name": "Firebrand",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3339661264",
-          "name": "Wyvern",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3339595728",
-          "name": "Wyvern",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3339431888",
-          "name": "Wyvern",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3350147024",
-          "name": "Firebrand",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "4081039312": {
-      "name": "Hermes",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3979063248",
-          "name": "Sea Gladiator",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3979227088",
-          "name": "Swordfish",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3979292624",
-          "name": "Albacore",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 4
-    },
-    "4178556624": {
-      "name": "Sekiryu",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3351129808",
-          "name": "J5N Tenrai",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3350965968",
-          "name": "A8M Rikuf\u016b",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3351195344",
-          "name": "J5N Tenrai",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 11
-    },
-    "4178556880": {
-      "name": "Eagle",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3336450000",
-          "name": "Wyvern",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3336286160",
-          "name": "Gloster Meteor",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3336515536",
-          "name": "Wyvern",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 11
-    },
-    "4178556912": {
-      "name": "United States",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3342741488",
-          "name": "A-2 Savage",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3351195632",
-          "name": "A-2 Savage",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3342577648",
-          "name": "Grumman F9F",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 11
-    },
-    "4179604944": {
-      "name": "Admiral Nakhimov",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3349917136",
-          "name": "Lavochkin La-5FN",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3349097936",
-          "name": "Polikarpov VIT-2 (VK-107)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3350146512",
-          "name": "Chyetverikov PT-1 (M-82)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3348868560",
-          "name": "Lavochkin La-9",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "4179605200": {
-      "name": "Hakury\u016b",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3346771664",
-          "name": "A8M Rikuf\u016b",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3347984080",
-          "name": "A7M Repp\u016b",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3347001040",
-          "name": "J5N Tenrai\nType 91 mod. 7",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3346935504",
-          "name": "J5N Tenrai",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3348049616",
-          "name": "C6N Saiun",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3347820240",
-          "name": "A7M Repp\u016b",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "4179605296": {
-      "name": "Manfred von Richthofen",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3350081328",
-          "name": "Fw 190G8",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3349098288",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3350146864",
-          "name": "Fw 190G8",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3349032752",
-          "name": "Ta 152C-1/R14",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3348868912",
-          "name": "Me 155G",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3349917488",
-          "name": "Fw 190A8",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 10
-    },
-    "4179605488": {
-      "name": "Midway",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3346771952",
-          "name": "F4U Corsair",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3344674800",
-          "name": "F8F Bearcat\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3344904176",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3344838640",
-          "name": "BTD Destroyer",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3345723376",
-          "name": "F8F Bearcat\nHVAR 127 mm",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3345887216",
-          "name": "AD-1 Skyraider",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3345952752",
-          "name": "AD-1 Skyraider",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    },
-    "4181702096": {
-      "name": "Pobeda",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3557535184",
-          "name": "Yakovlev Yak-9U",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3558813136",
-          "name": "Sukhoi Su-2 (M-82)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3557764560",
-          "name": "Tairov Ta-3 (M-88)",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3558583760",
-          "name": "Yakovlev Yak-1",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 8
-    },
-    "4181702352": {
-      "name": "Sh\u014dkaku",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3557699280",
-          "name": "D4Y3 Suisei",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3557535440",
-          "name": "A6M5 Zero",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3556716240",
-          "name": "B7A Ry\u016bsei",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3557764816",
-          "name": "B6N Tenzan",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3556486864",
-          "name": "N1K2-J\nShiden-Kai",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3556650704",
-          "name": "B7A Ry\u016bsei",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "4181702448": {
-      "name": "August von Parseval",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3553505072",
-          "name": "Fi 167",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3553570608",
-          "name": "Bf 110C",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3555438384",
-          "name": "Bf 109G",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3552456496",
-          "name": "Bf 110C",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3556486960",
-          "name": "Bf 109T",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3554619184",
-          "name": "Fi 167",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "4181702608": {
-      "name": "Implacable",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3558584272",
-          "name": "Seafire",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3558748112",
-          "name": "Spearfish",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3559632848",
-          "name": "Firefly",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3559796688",
-          "name": "Barracuda MkV",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3559862224",
-          "name": "Barracuda MkV",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3558813648",
-          "name": "Spearfish",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "4181702640": {
-      "name": "Lexington",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3553341424",
-          "name": "F4U-1D Corsair\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3550359536",
-          "name": "SB2C Helldiver",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3556716528",
-          "name": "SB2C Helldiver",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3554390000",
-          "name": "F4U-1D Corsair\nHVAR 127 mm",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3555438576",
-          "name": "F6F Hellcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3551408112",
-          "name": "SBD Dauntless",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3550425072",
-          "name": "TBF Avenger",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "4183799248": {
-      "name": "Serov",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3769347536",
-          "name": "Polikarpov I-153",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3769576912",
-          "name": "Polikarpov R-5T",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3768298960",
-          "name": "Polikarpov I-180",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3768528336",
-          "name": "Grokhovsky G-37",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "4183799504": {
-      "name": "Ry\u016bj\u014d",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3766202064",
-          "name": "A6M2 Zero",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3767414480",
-          "name": "D3A Val",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3766365904",
-          "name": "D4Y2 Suisei",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3767480016",
-          "name": "B5N2 Kate",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3767250640",
-          "name": "A5M Claude",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3768528592",
-          "name": "B4Y Jean",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "4183799600": {
-      "name": "Weser",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3768463152",
-          "name": "Hs 123",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3769577264",
-          "name": "Ar 95b",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3769511728",
-          "name": "Ar 81",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3768528688",
-          "name": "Do 22",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3769347888",
-          "name": "Ar 197",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3768299312",
-          "name": "Bf 109E",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 6
-    },
-    "4183799760": {
-      "name": "Furious",
-      "nation": "uk",
-      "planes": [
-        {
-          "id": "3768299472",
-          "name": "Sea Hurricane",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3768463312",
-          "name": "Barracuda MkII",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3769577424",
-          "name": "Albacore",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3769348048",
-          "name": "Skua",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3769511888",
-          "name": "Skua",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3768528848",
-          "name": "Barracuda MkII",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "4183799792": {
-      "name": "Ranger",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3766431728",
-          "name": "TBD\u00a0Devastator",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3765153776",
-          "name": "F4F\u00a0Wildcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3765317616",
-          "name": "SB2U\u00a0Vindicator",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3767480304",
-          "name": "T4M",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3766202352",
-          "name": "F2A\u00a0Buffalo",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3766366192",
-          "name": "SBC Helldiver",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "4185896400": {
-      "name": "Komsomolets",
-      "nation": "ussr",
-      "planes": [
-        {
-          "id": "3979062736",
-          "name": "Polikarpov I-15",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3979292112",
-          "name": "Polikarpov R-5T",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 4
-    },
-    "4185896656": {
-      "name": "H\u014dsh\u014d",
-      "nation": "japan",
-      "planes": [
-        {
-          "id": "3979226832",
-          "name": "D1A Susie",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3977195216",
-          "name": "B4Y Jean",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3976965840",
-          "name": "A4N",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        }
-      ],
-      "tier": 4
-    },
-    "4185896752": {
-      "name": "Rhein",
-      "nation": "germany",
-      "planes": [
-        {
-          "id": "3979063088",
-          "name": "Ar 68",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3979226928",
-          "name": "He 50",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3979292464",
-          "name": "Ar 95b",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 4
-    },
-    "4185896944": {
-      "name": "Langley",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3977195504",
-          "name": "T4M",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3976966128",
-          "name": "F3F Gulfhawk",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3977129968",
-          "name": "SBU Corsair",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        }
-      ],
-      "tier": 4
-    },
-    "4265588720": {
-      "name": "Yorktown",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3560681456",
-          "name": "F4U-1D Corsair\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3549310960",
-          "name": "SB2C-4 Helldiver",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3549147120",
-          "name": "F4U-1D Corsair\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3560845296",
-          "name": "SB2C-4 Helldiver",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3553570800",
-          "name": "AD-1 Skyraider",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3560910832",
-          "name": "TBF Avenger",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 8
-    },
-    "4267685872": {
-      "name": "Independence",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "4082872304",
-          "name": "F4F\u00a0Wildcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "4083101680",
-          "name": "TBF-1C Avenger",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "4084084720",
-          "name": "Douglas SBD-4",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "4083920880",
-          "name": "F4F\u00a0Wildcat",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "4083036144",
-          "name": "Douglas SBD-4",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "4084150256",
-          "name": "TBD\u00a0Devastator",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 6
-    },
-    "4273977328": {
-      "name": "Essex",
-      "nation": "usa",
-      "planes": [
-        {
-          "id": "3329994736",
-          "name": "F8F Bearcat\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3339661296",
-          "name": "BTD Destroyer",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        },
-        {
-          "id": "3332091888",
-          "name": "F8F Bearcat\nTiny Tim",
-          "normalized_type": "fighter",
-          "type": "Fighter"
-        },
-        {
-          "id": "3330158576",
-          "name": "TB2D Skypirate",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3329110000",
-          "name": "TB2D Skypirate",
-          "normalized_type": "bomber",
-          "type": "DiveBomber"
-        },
-        {
-          "id": "3340709872",
-          "name": "AD-1 Skyraider",
-          "normalized_type": "torpedo",
-          "type": "TorpedoBomber"
-        }
-      ],
-      "tier": 10
-    }
-  },
-  "by_plane_id": {}
+  "by_plane_id": {
+    "3247341360": "bomber",
+    "3247341552": "bomber",
+    "3247374320": "bomber",
+    "3248324304": "fighter",
+    "3248324592": "fighter",
+    "3248389840": "bomber",
+    "3248389936": "bomber",
+    "3248390128": "bomber",
+    "3248455376": "bomber",
+    "3248455664": "bomber",
+    "3249438512": "bomber",
+    "3249438704": "bomber",
+    "3250487088": "bomber",
+    "3250487280": "bomber",
+    "3251535664": "bomber",
+    "3252584240": "bomber",
+    "3253632816": "bomber",
+    "3254681392": "bomber",
+    "3255729968": "bomber",
+    "3255730160": "bomber",
+    "3256713008": "fighter",
+    "3256778544": "bomber",
+    "3256778736": "bomber",
+    "3256844080": "bomber",
+    "3292364592": "fighter",
+    "3293413168": "fighter",
+    "3294461744": "fighter",
+    "3295313712": "skip",
+    "3295510320": "fighter",
+    "3295575856": "bomber",
+    "3296362288": "skip",
+    "3296624432": "bomber",
+    "3296690160": "bomber",
+    "3297410864": "skip",
+    "3297607472": "fighter",
+    "3297673008": "bomber",
+    "3297738544": "bomber",
+    "3298459440": "skip",
+    "3298656048": "fighter",
+    "3298721584": "bomber",
+    "3298787120": "bomber",
+    "3317530608": "fighter",
+    "3318579184": "fighter",
+    "3318644720": "bomber",
+    "3318710256": "bomber",
+    "3319627760": "fighter",
+    "3319693296": "bomber",
+    "3319758832": "bomber",
+    "3329064656": "fighter",
+    "3329064944": "fighter",
+    "3330113232": "fighter",
+    "3330113520": "fighter",
+    "3330178768": "bomber",
+    "3330179056": "bomber",
+    "3330244304": "bomber",
+    "3330244592": "bomber",
+    "3332276016": "bomber",
+    "3332341552": "bomber",
+    "3333324592": "bomber",
+    "3334373168": "bomber",
+    "3335421232": "bomber",
+    "3335421680": "bomber",
+    "3335421744": "bomber",
+    "3335421936": "bomber",
+    "3336469808": "bomber",
+    "3336469968": "bomber",
+    "3336470256": "bomber",
+    "3336470320": "bomber",
+    "3336470512": "bomber",
+    "3337518384": "bomber",
+    "3337518544": "bomber",
+    "3337518800": "bomber",
+    "3337518832": "bomber",
+    "3337518896": "bomber",
+    "3337519088": "bomber",
+    "3338566960": "bomber",
+    "3338567120": "bomber",
+    "3338567376": "bomber",
+    "3338567408": "bomber",
+    "3338567472": "bomber",
+    "3338567664": "bomber",
+    "3339615536": "bomber",
+    "3339615696": "bomber",
+    "3339615952": "bomber",
+    "3339615984": "bomber",
+    "3339616048": "bomber",
+    "3339616240": "bomber",
+    "3340402384": "skip",
+    "3340664112": "bomber",
+    "3340664144": "bomber",
+    "3340664272": "bomber",
+    "3340664528": "bomber",
+    "3340664560": "bomber",
+    "3340664592": "bomber",
+    "3340664624": "bomber",
+    "3340664816": "bomber",
+    "3341712688": "bomber",
+    "3341712720": "bomber",
+    "3341712848": "bomber",
+    "3341713104": "bomber",
+    "3341713136": "bomber",
+    "3341713200": "bomber",
+    "3341713232": "bomber",
+    "3341713392": "bomber",
+    "3342761168": "bomber",
+    "3342761264": "bomber",
+    "3342761296": "bomber",
+    "3342761424": "bomber",
+    "3342761680": "bomber",
+    "3342761712": "bomber",
+    "3342761776": "bomber",
+    "3342761808": "bomber",
+    "3342761936": "bomber",
+    "3342761968": "bomber",
+    "3343318288": "bomber",
+    "3343318832": "bomber",
+    "3343809840": "bomber",
+    "3343809872": "bomber",
+    "3343810000": "bomber",
+    "3343810256": "bomber",
+    "3343810288": "bomber",
+    "3343810352": "bomber",
+    "3343810384": "bomber",
+    "3343810512": "bomber",
+    "3343810544": "bomber",
+    "3344792848": "fighter",
+    "3344793040": "fighter",
+    "3344793392": "fighter",
+    "3344858320": "bomber",
+    "3344858448": "bomber",
+    "3344858480": "bomber",
+    "3344858544": "bomber",
+    "3344858576": "bomber",
+    "3344858832": "bomber",
+    "3344858864": "bomber",
+    "3344858928": "bomber",
+    "3344858960": "bomber",
+    "3344859088": "bomber",
+    "3344859120": "bomber",
+    "3345841424": "fighter",
+    "3345841616": "fighter",
+    "3345841968": "fighter",
+    "3345907056": "bomber",
+    "3345907120": "bomber",
+    "3345907408": "bomber",
+    "3345907536": "bomber",
+    "3345907664": "bomber",
+    "3345907696": "bomber",
+    "3346693584": "skip",
+    "3346890000": "fighter",
+    "3346890544": "fighter",
+    "3346955600": "bomber",
+    "3346955632": "bomber",
+    "3346955696": "bomber",
+    "3346955984": "bomber",
+    "3346956048": "bomber",
+    "3346956112": "bomber",
+    "3346956240": "bomber",
+    "3346956272": "bomber",
+    "3347021264": "bomber",
+    "3347938576": "fighter",
+    "3347938768": "fighter",
+    "3347939120": "fighter",
+    "3348004176": "bomber",
+    "3348004208": "bomber",
+    "3348004272": "bomber",
+    "3348004560": "bomber",
+    "3348004624": "bomber",
+    "3348004688": "bomber",
+    "3348004816": "bomber",
+    "3348004848": "bomber",
+    "3348069648": "bomber",
+    "3348070384": "bomber",
+    "3348790736": "skip",
+    "3348987344": "fighter",
+    "3348987696": "fighter",
+    "3348987888": "fighter",
+    "3349052688": "bomber",
+    "3349052752": "bomber",
+    "3349052784": "bomber",
+    "3349052848": "bomber",
+    "3349053136": "bomber",
+    "3349053200": "bomber",
+    "3349053232": "bomber",
+    "3349053264": "bomber",
+    "3349053392": "bomber",
+    "3349053424": "bomber",
+    "3349118224": "bomber",
+    "3349118416": "bomber",
+    "3349118768": "bomber",
+    "3349609744": "bomber",
+    "3349610288": "bomber",
+    "3349839312": "skip",
+    "3349839696": "skip",
+    "3350035920": "fighter",
+    "3350036272": "fighter",
+    "3350101328": "bomber",
+    "3350101424": "bomber",
+    "3350101712": "bomber",
+    "3350101776": "bomber",
+    "3350101808": "bomber",
+    "3350101840": "bomber",
+    "3350101968": "bomber",
+    "3350102000": "bomber",
+    "3350166992": "bomber",
+    "3350167344": "bomber",
+    "3350167536": "bomber",
+    "3351149872": "bomber",
+    "3351149904": "bomber",
+    "3351150000": "bomber",
+    "3351150352": "bomber",
+    "3351150544": "bomber",
+    "3351150576": "bomber",
+    "3408887504": "bomber",
+    "3416096752": "fighter",
+    "3437068272": "fighter",
+    "3439164688": "fighter",
+    "3440213264": "fighter",
+    "3441261840": "fighter",
+    "3442310416": "fighter",
+    "3443358992": "fighter",
+    "3443490064": "bomber",
+    "3444407568": "fighter",
+    "3444473104": "bomber",
+    "3444538640": "bomber",
+    "3445456144": "fighter",
+    "3445521680": "bomber",
+    "3445587216": "bomber",
+    "3447553744": "fighter",
+    "3447553840": "fighter",
+    "3447554000": "fighter",
+    "3447554032": "fighter",
+    "3454894064": "fighter",
+    "3454959600": "bomber",
+    "3508436688": "bomber",
+    "3539828048": "fighter",
+    "3550313808": "fighter",
+    "3550379344": "bomber",
+    "3550444880": "bomber",
+    "3555556816": "fighter",
+    "3556605392": "fighter",
+    "3556605744": "fighter",
+    "3557457360": "skip",
+    "3557653712": "fighter",
+    "3557653968": "fighter",
+    "3557719504": "bomber",
+    "3557785040": "bomber",
+    "3558505936": "skip",
+    "3558702288": "fighter",
+    "3558702544": "fighter",
+    "3558702896": "fighter",
+    "3558768432": "bomber",
+    "3558833616": "bomber",
+    "3558833968": "bomber",
+    "3559554512": "skip",
+    "3559750864": "fighter",
+    "3559751120": "fighter",
+    "3559751472": "fighter",
+    "3559816400": "bomber",
+    "3559817008": "bomber",
+    "3559881936": "bomber",
+    "3559882192": "bomber",
+    "3559882544": "bomber",
+    "3560799504": "fighter",
+    "3560865040": "bomber",
+    "3560930576": "bomber",
+    "3636297424": "fighter",
+    "3636362960": "bomber",
+    "3636428496": "bomber",
+    "3638394576": "fighter",
+    "3638460112": "bomber",
+    "3638525648": "bomber",
+    "3646783184": "fighter",
+    "3646848720": "bomber",
+    "3646914256": "bomber",
+    "3648880336": "fighter",
+    "3648945872": "bomber",
+    "3649011408": "bomber",
+    "3655237616": "bomber",
+    "3655303152": "bomber",
+    "3657268944": "fighter",
+    "3657334480": "bomber",
+    "3657400016": "bomber",
+    "3659366096": "fighter",
+    "3659431632": "bomber",
+    "3659497168": "bomber",
+    "3663560400": "fighter",
+    "3664608976": "fighter",
+    "3665657552": "fighter",
+    "3720249328": "bomber",
+    "3730669552": "fighter",
+    "3730735088": "bomber",
+    "3730800624": "bomber",
+    "3741220560": "bomber",
+    "3751641072": "fighter",
+    "3751706608": "bomber",
+    "3751772144": "bomber",
+    "3757932528": "fighter",
+    "3758981104": "fighter",
+    "3760029680": "fighter",
+    "3760095216": "bomber",
+    "3760160752": "bomber",
+    "3761143504": "bomber",
+    "3761143792": "bomber",
+    "3761209328": "bomber",
+    "3762126544": "fighter",
+    "3762126576": "fighter",
+    "3762126640": "fighter",
+    "3762126800": "fighter",
+    "3762126832": "fighter",
+    "3762192080": "bomber",
+    "3762192176": "bomber",
+    "3762192336": "bomber",
+    "3762192368": "bomber",
+    "3762257616": "bomber",
+    "3762257648": "bomber",
+    "3762257712": "bomber",
+    "3762257872": "bomber",
+    "3762257904": "bomber",
+    "3763175376": "fighter",
+    "3764223952": "fighter",
+    "3764289488": "bomber",
+    "3764355024": "bomber",
+    "3765272368": "fighter",
+    "3766320944": "fighter",
+    "3767369168": "fighter",
+    "3767369520": "fighter",
+    "3767369552": "fighter",
+    "3767435056": "bomber",
+    "3767500592": "bomber",
+    "3768221136": "skip",
+    "3768417744": "fighter",
+    "3768418096": "fighter",
+    "3768418128": "fighter",
+    "3768418288": "fighter",
+    "3768483632": "bomber",
+    "3768548816": "bomber",
+    "3768549168": "bomber",
+    "3769269712": "skip",
+    "3769270096": "skip",
+    "3769466320": "fighter",
+    "3769466672": "fighter",
+    "3769466704": "fighter",
+    "3769532208": "bomber",
+    "3769532240": "bomber",
+    "3769597392": "bomber",
+    "3769597744": "bomber",
+    "3769597776": "bomber",
+    "3835527152": "fighter",
+    "3843915760": "fighter",
+    "3844964336": "fighter",
+    "3846012912": "fighter",
+    "3848110064": "fighter",
+    "3854401232": "fighter",
+    "3855450064": "fighter",
+    "3856498640": "fighter",
+    "3856498672": "fighter",
+    "3862790096": "fighter",
+    "3863838416": "fighter",
+    "3863838672": "fighter",
+    "3863838704": "fighter",
+    "3864886544": "fighter",
+    "3864886608": "fighter",
+    "3864886992": "fighter",
+    "3864887248": "fighter",
+    "3864887280": "fighter",
+    "3866984144": "fighter",
+    "3866984176": "fighter",
+    "3866984400": "fighter",
+    "3866984432": "fighter",
+    "3869081296": "fighter",
+    "3869081552": "fighter",
+    "3869081584": "fighter",
+    "3871178448": "fighter",
+    "3871178704": "fighter",
+    "3871178736": "fighter",
+    "3961356272": "fighter",
+    "3968696304": "fighter",
+    "3969744144": "fighter",
+    "3969744848": "fighter",
+    "3969744880": "fighter",
+    "3969810384": "bomber",
+    "3969875664": "bomber",
+    "3969875920": "bomber",
+    "3971842000": "fighter",
+    "3971842032": "fighter",
+    "3971907536": "bomber",
+    "3971973072": "bomber",
+    "3975052496": "bomber",
+    "3976101072": "bomber",
+    "3977149648": "bomber",
+    "3978132944": "fighter",
+    "3978133296": "fighter",
+    "3978198224": "bomber",
+    "3978984912": "skip",
+    "3979181264": "fighter",
+    "3979181520": "fighter",
+    "3979181872": "fighter",
+    "3979246800": "bomber",
+    "3979247056": "bomber",
+    "3979247408": "bomber",
+    "3979312592": "bomber",
+    "3979312944": "bomber",
+    "4053696496": "bomber",
+    "4055793648": "bomber",
+    "4066213872": "fighter",
+    "4066279408": "bomber",
+    "4066344944": "bomber",
+    "4073684688": "bomber",
+    "4073684944": "bomber",
+    "4074602192": "fighter",
+    "4074602448": "fighter",
+    "4074602480": "fighter",
+    "4074667280": "bomber",
+    "4074667728": "bomber",
+    "4074667984": "bomber",
+    "4074668016": "bomber",
+    "4074732816": "bomber",
+    "4074733264": "bomber",
+    "4074733520": "bomber",
+    "4074733552": "bomber",
+    "4076699344": "fighter",
+    "4076699600": "fighter",
+    "4076699632": "fighter",
+    "4076764880": "bomber",
+    "4076765136": "bomber",
+    "4076765168": "bomber",
+    "4076830416": "bomber",
+    "4076830672": "bomber",
+    "4076830704": "bomber",
+    "4078796496": "fighter",
+    "4078796752": "fighter",
+    "4078796784": "fighter",
+    "4078862032": "bomber",
+    "4078862288": "bomber",
+    "4078862320": "bomber",
+    "4078927568": "bomber",
+    "4078927824": "bomber",
+    "4078927856": "bomber",
+    "4082991088": "fighter",
+    "4083056624": "bomber",
+    "4083122160": "bomber",
+    "4084039664": "fighter",
+    "4084105200": "bomber",
+    "4084170736": "bomber",
+    "4158554096": "bomber",
+    "4160651248": "bomber",
+    "4165959632": "bomber",
+    "4166877136": "fighter",
+    "4166942672": "bomber",
+    "4167008208": "bomber",
+    "4167925456": "fighter",
+    "4167925712": "fighter",
+    "4167925744": "fighter",
+    "4167990992": "bomber",
+    "4167991248": "bomber",
+    "4167991280": "bomber",
+    "4168056528": "bomber",
+    "4168056784": "bomber",
+    "4168056816": "bomber",
+    "4168974032": "fighter",
+    "4168974320": "fighter",
+    "4169039568": "bomber",
+    "4169039856": "bomber",
+    "4169105104": "bomber",
+    "4169105392": "bomber",
+    "4171071472": "fighter",
+    "4171137008": "bomber",
+    "4171202544": "bomber",
+    "4178411472": "fighter",
+    "4178477008": "bomber",
+    "4178477040": "bomber",
+    "4178542544": "bomber",
+    "4179459792": "fighter",
+    "4179460048": "fighter",
+    "4179460080": "fighter",
+    "4179525328": "bomber",
+    "4179525584": "bomber",
+    "4179525616": "bomber",
+    "4179590864": "bomber",
+    "4179591120": "bomber",
+    "4179591152": "bomber",
+    "4181556944": "fighter",
+    "4181557200": "fighter",
+    "4181557232": "fighter",
+    "4181622480": "bomber",
+    "4181622736": "bomber",
+    "4181622768": "bomber",
+    "4181688016": "bomber",
+    "4181688272": "bomber",
+    "4181688304": "bomber",
+    "4182179088": "bomber",
+    "4183654096": "fighter",
+    "4183654352": "fighter",
+    "4183654384": "fighter",
+    "4183719632": "bomber",
+    "4183719888": "bomber",
+    "4183719920": "bomber",
+    "4183785168": "bomber",
+    "4183785424": "bomber",
+    "4183785456": "bomber",
+    "4185751248": "fighter",
+    "4185751504": "fighter",
+    "4185751536": "fighter",
+    "4185816784": "bomber",
+    "4185817040": "bomber",
+    "4185817072": "bomber",
+    "4185882320": "bomber",
+    "4185882576": "bomber",
+    "4185882608": "bomber",
+    "4186865648": "bomber",
+    "4187847952": "fighter",
+    "4187914224": "bomber",
+    "4187979024": "bomber",
+    "4188962800": "bomber",
+    "4239359984": "bomber",
+    "4240407824": "bomber",
+    "4240408560": "bomber",
+    "4241457136": "bomber",
+    "4261249008": "fighter",
+    "4262297584": "fighter",
+    "4262919440": "bomber",
+    "4263345424": "fighter",
+    "4263346160": "fighter",
+    "4264394000": "fighter",
+    "4264394736": "fighter",
+    "4265443312": "fighter",
+    "4268588752": "fighter",
+    "4268589040": "fighter",
+    "4269211056": "bomber",
+    "4269636880": "fighter",
+    "4269637328": "fighter",
+    "4269637616": "fighter",
+    "4269702928": "bomber",
+    "4270259632": "bomber",
+    "4270685904": "fighter",
+    "4270686192": "fighter",
+    "4270751504": "bomber",
+    "4271308208": "bomber",
+    "4271734480": "fighter",
+    "4271734576": "fighter",
+    "4271734768": "fighter",
+    "4271800080": "bomber",
+    "4272356784": "bomber",
+    "4272783056": "fighter",
+    "4272783152": "fighter",
+    "4272783312": "fighter",
+    "4272783344": "fighter",
+    "4272848656": "bomber",
+    "4273405360": "bomber",
+    "4273831632": "fighter",
+    "4273831888": "fighter",
+    "4273897232": "bomber",
+    "4274879760": "fighter",
+    "4274880208": "fighter",
+    "4274880464": "fighter",
+    "4274945808": "bomber",
+    "4275503088": "bomber",
+    "4275928784": "fighter",
+    "4275929040": "fighter",
+    "4275929072": "fighter",
+    "4275994384": "bomber",
+    "4276551664": "bomber",
+    "4276976848": "fighter",
+    "4276977104": "fighter",
+    "4276977360": "fighter",
+    "4276977616": "fighter",
+    "4276977648": "fighter",
+    "4277042960": "bomber",
+    "4277600240": "bomber",
+    "4278025680": "fighter",
+    "4278025936": "fighter",
+    "4278026192": "fighter",
+    "4278026224": "fighter",
+    "4278091536": "bomber",
+    "4278648816": "bomber",
+    "4279074256": "fighter",
+    "4279074512": "fighter",
+    "4279074800": "fighter",
+    "4279140112": "bomber",
+    "4279697392": "bomber",
+    "4280122800": "fighter",
+    "4280122832": "fighter",
+    "4280123088": "fighter",
+    "4280123376": "fighter",
+    "4280188688": "bomber",
+    "4280745968": "bomber",
+    "4281171376": "fighter",
+    "4281171408": "fighter",
+    "4281171664": "fighter",
+    "4281171952": "fighter",
+    "4281236752": "bomber",
+    "4281237264": "bomber",
+    "4281237488": "bomber",
+    "4281302736": "bomber",
+    "4281303024": "bomber",
+    "4281794544": "bomber",
+    "4282219952": "fighter",
+    "4282219984": "fighter",
+    "4282220528": "fighter",
+    "4282285776": "bomber",
+    "4282285840": "bomber",
+    "4282286064": "bomber",
+    "4282351312": "bomber",
+    "4282351600": "bomber",
+    "4282842384": "bomber",
+    "4282842832": "bomber",
+    "4282843120": "bomber",
+    "4283268528": "fighter",
+    "4283268560": "fighter",
+    "4283268816": "fighter",
+    "4283269104": "fighter",
+    "4283334352": "bomber",
+    "4283334416": "bomber",
+    "4283334640": "bomber",
+    "4283399888": "bomber",
+    "4283400176": "bomber",
+    "4283891408": "bomber",
+    "4283891696": "bomber",
+    "4284317104": "fighter",
+    "4284317392": "fighter",
+    "4284317424": "fighter",
+    "4284317680": "fighter",
+    "4284382928": "bomber",
+    "4284382992": "bomber",
+    "4284383216": "bomber",
+    "4284448016": "bomber",
+    "4284448464": "bomber",
+    "4284448752": "bomber",
+    "4284939728": "bomber",
+    "4284939984": "bomber",
+    "4284940080": "bomber",
+    "4284940112": "bomber",
+    "4285365520": "fighter",
+    "4285365968": "fighter",
+    "4285366000": "fighter",
+    "4285366256": "fighter",
+    "4285431056": "bomber",
+    "4285431504": "bomber",
+    "4285431568": "bomber",
+    "4285431792": "bomber",
+    "4285497040": "bomber",
+    "4285497328": "bomber",
+    "4285988304": "bomber",
+    "4285988560": "bomber",
+    "4285988592": "bomber",
+    "4285988656": "bomber",
+    "4285988816": "bomber",
+    "4285988848": "bomber",
+    "4286414096": "fighter",
+    "4286414544": "fighter",
+    "4286414576": "fighter",
+    "4286414800": "fighter",
+    "4286414832": "fighter",
+    "4286479632": "bomber",
+    "4286480080": "bomber",
+    "4286480144": "bomber",
+    "4286480336": "bomber",
+    "4286480368": "bomber",
+    "4286545616": "bomber",
+    "4286545872": "bomber",
+    "4286545904": "bomber",
+    "4287036624": "bomber",
+    "4287036688": "bomber",
+    "4287036880": "bomber",
+    "4287037136": "bomber",
+    "4287037168": "bomber",
+    "4287037232": "bomber",
+    "4287037392": "bomber",
+    "4287037424": "bomber",
+    "4287463120": "fighter",
+    "4287463216": "fighter",
+    "4287463248": "fighter",
+    "4287463376": "fighter",
+    "4287463408": "fighter",
+    "4287528656": "bomber",
+    "4287528720": "bomber",
+    "4287528912": "bomber",
+    "4287528944": "bomber",
+    "4287594192": "bomber",
+    "4287594448": "bomber",
+    "4287594480": "bomber",
+    "4288085200": "bomber",
+    "4288085456": "bomber",
+    "4288085712": "bomber",
+    "4288085744": "bomber",
+    "4288085776": "bomber",
+    "4288085808": "bomber",
+    "4288085840": "bomber",
+    "4288085968": "bomber",
+    "4288086000": "bomber",
+    "4288511248": "fighter",
+    "4288511696": "fighter",
+    "4288511728": "fighter",
+    "4288511760": "fighter",
+    "4288511792": "fighter",
+    "4288511824": "fighter",
+    "4288511952": "fighter",
+    "4288511984": "fighter",
+    "4288577232": "bomber",
+    "4288577488": "bomber",
+    "4288577520": "bomber",
+    "4288642768": "bomber",
+    "4288643024": "bomber",
+    "4288643056": "bomber",
+    "4289133776": "bomber",
+    "4289134032": "bomber",
+    "4289134288": "bomber",
+    "4289134320": "bomber",
+    "4289134352": "bomber",
+    "4289134384": "bomber",
+    "4289134416": "bomber",
+    "4289134544": "bomber",
+    "4289134576": "bomber",
+    "4289559760": "fighter",
+    "4289559824": "fighter",
+    "4289560272": "fighter",
+    "4289560304": "fighter",
+    "4289560336": "fighter",
+    "4289560368": "fighter",
+    "4289560400": "fighter",
+    "4289560496": "fighter",
+    "4289560528": "fighter",
+    "4289560560": "fighter",
+    "4289625360": "bomber",
+    "4289625808": "bomber",
+    "4289625904": "bomber",
+    "4289626064": "bomber",
+    "4289626096": "bomber",
+    "4289691344": "bomber",
+    "4289691600": "bomber",
+    "4289691632": "bomber",
+    "4290182480": "bomber",
+    "4290182608": "bomber",
+    "4290182864": "bomber",
+    "4290182896": "bomber",
+    "4290182928": "bomber",
+    "4290182960": "bomber",
+    "4290182992": "bomber",
+    "4290183120": "bomber",
+    "4290183152": "bomber",
+    "4290608464": "fighter",
+    "4290608848": "fighter",
+    "4290608880": "fighter",
+    "4290608912": "fighter",
+    "4290608944": "fighter",
+    "4290608976": "fighter",
+    "4290609072": "fighter",
+    "4290609104": "fighter",
+    "4290609136": "fighter",
+    "4290674384": "bomber",
+    "4290674480": "bomber",
+    "4290674640": "bomber",
+    "4290674672": "bomber",
+    "4290739920": "bomber",
+    "4290740176": "bomber",
+    "4290740208": "bomber",
+    "4291067152": "bomber",
+    "4291231056": "bomber",
+    "4291231184": "bomber",
+    "4291231440": "bomber",
+    "4291231472": "bomber",
+    "4291231504": "bomber",
+    "4291231536": "bomber",
+    "4291231568": "bomber",
+    "4291657040": "fighter",
+    "4291657424": "fighter",
+    "4291657456": "fighter",
+    "4291657488": "fighter",
+    "4291657520": "fighter",
+    "4291657552": "fighter",
+    "4291657648": "fighter",
+    "4291657680": "fighter",
+    "4291657712": "fighter",
+    "4291722512": "bomber",
+    "4291722960": "bomber",
+    "4291723056": "bomber",
+    "4291723216": "bomber",
+    "4291723248": "bomber",
+    "4291788048": "bomber",
+    "4291788496": "bomber",
+    "4291788752": "bomber",
+    "4291788784": "bomber",
+    "4292115728": "bomber",
+    "4292279568": "bomber",
+    "4292279632": "bomber",
+    "4292279760": "bomber",
+    "4292280016": "bomber",
+    "4292280048": "bomber",
+    "4292280080": "bomber",
+    "4292280112": "bomber",
+    "4292280304": "bomber",
+    "4292705552": "fighter",
+    "4292705616": "fighter",
+    "4292705648": "fighter",
+    "4292706000": "fighter",
+    "4292706032": "fighter",
+    "4292706064": "fighter",
+    "4292706096": "fighter",
+    "4292706128": "fighter",
+    "4292706224": "fighter",
+    "4292706256": "fighter",
+    "4292706288": "fighter",
+    "4292771536": "bomber",
+    "4292771632": "bomber",
+    "4292771792": "bomber",
+    "4292771824": "bomber",
+    "4292836624": "bomber",
+    "4292837072": "bomber",
+    "4292837168": "bomber",
+    "4292837328": "bomber",
+    "4292837360": "bomber",
+    "4293164304": "bomber",
+    "4293328144": "bomber",
+    "4293328176": "bomber",
+    "4293328208": "bomber",
+    "4293328240": "bomber",
+    "4293328336": "bomber",
+    "4293328592": "bomber",
+    "4293328624": "bomber",
+    "4293328656": "bomber",
+    "4293328688": "bomber",
+    "4293328720": "bomber",
+    "4293328848": "bomber",
+    "4293328880": "bomber",
+    "4293558224": "skip",
+    "4293754064": "fighter",
+    "4293754192": "fighter",
+    "4293754576": "fighter",
+    "4293754608": "fighter",
+    "4293754640": "fighter",
+    "4293754672": "fighter",
+    "4293754704": "fighter",
+    "4293754800": "fighter",
+    "4293754832": "fighter",
+    "4293754864": "fighter",
+    "4293819664": "bomber",
+    "4293820112": "bomber",
+    "4293820208": "bomber",
+    "4293820368": "bomber",
+    "4293820400": "bomber",
+    "4293885200": "bomber",
+    "4293885648": "bomber",
+    "4293885744": "bomber",
+    "4293885904": "bomber",
+    "4293885936": "bomber",
+    "4293917968": "bomber"
+  }
 }

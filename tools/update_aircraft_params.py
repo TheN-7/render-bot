@@ -209,6 +209,9 @@ def _build_by_cv(cache: Dict[str, Any]) -> Dict[str, Any]:
             "name": str(data.get("name") or ""),
             "nation": str(data.get("nation") or ""),
             "tier": data.get("tier"),
+            "type": str(data.get("type") or ""),
+            "modules": data.get("modules", {}),
+            "modules_tree": data.get("modules_tree", {}),
             "planes": planes,
         }
     return by_cv
