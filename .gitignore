@@ -46,6 +46,7 @@ content/*
 
 # gui/: keep only the assets the renderer uses; ignore everything else
 gui/*
+!gui/consumables
 !gui/battle_hud/
 !gui/battle_hud/icon_frag/
 !gui/battle_hud/icon_frag/**
@@ -58,8 +59,7 @@ gui/*
 !gui/ships_silhouettes/**
 !gui/ship_dead_icons/
 !gui/ship_dead_icons/**
-!gui/service_kit/
-gui/service_kit/*
+
 !gui/service_kit/plane_types/
 !gui/service_kit/plane_types/icon_default_plane_torpedo.png
 !gui/service_kit/plane_types/icon_default_plane_torpedo_deepwater.png
@@ -72,7 +72,6 @@ gui/service_kit/*
 !gui/service_kit/plane_types/icon_default_plane_fighter.png
 !gui/service_kit/plane_types/icon_default_asup_bomb_depthcharge.png
 !gui/service_kit/plane_types/icon_default_asup_mine.png
-
 
 
 !gui/spaces/
