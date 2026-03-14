@@ -937,11 +937,56 @@ def _snapshot_battle_state(
     caps.sort(key=lambda v: (int(v.get("index", -1)), int(v.get("entity_id", 0))))
 
     team_win_score = _safe_int(missions.get("teamWinScore")) if isinstance(missions, dict) else None
+    def _first_time_value(keys: tuple[str, ...], *sources: Any) -> Optional[float]:
+        for key in keys:
+            for src in sources:
+                if not isinstance(src, dict) or key not in src:
+                    continue
+                value = _safe_float(src.get(key))
+                if value is None:
+                    continue
+                if value > 10000:
+                    value = value / 1000.0
+                return float(value)
+        return None
+
+    time_left_keys = (
+        "timeLeft",
+        "time_left",
+        "battleTimeLeft",
+        "battle_time_left",
+        "roundTimeLeft",
+        "round_time_left",
+        "roundTime",
+        "round_time",
+        "remainingTime",
+        "remaining_time",
+        "timeRemaining",
+        "time_remaining",
+        "matchTimeLeft",
+        "match_time_left",
+    )
+    time_elapsed_keys = (
+        "battleTime",
+        "battle_time",
+        "elapsedTime",
+        "elapsed_time",
+        "timeElapsed",
+        "time_elapsed",
+        "matchTime",
+        "match_time",
+        "roundTimeElapsed",
+        "round_time_elapsed",
+    )
+    time_left_s = _first_time_value(time_left_keys, state, client, missions)
+    time_elapsed_s = _first_time_value(time_elapsed_keys, state, client, missions)
     return {
         "time_s": round(float(time_s), 3),
         "team_scores": team_scores,
         "team_win_score": team_win_score if team_win_score is not None else 0,
         "caps": caps,
+        "time_left_s": round(float(time_left_s), 3) if time_left_s is not None else None,
+        "time_elapsed_s": round(float(time_elapsed_s), 3) if time_elapsed_s is not None else None,
     }
 
 
@@ -1077,7 +1122,10 @@ def _snapshot_health_state(entities: Dict[int, Any], time_s: float) -> Dict[str,
                 continue
         except Exception:
             continue
-        client = entity.properties.get("client", {}) if hasattr(entity, "properties") else {}
+        props = entity.properties if hasattr(entity, "properties") else {}
+        client = props.get("client", {}) if isinstance(props, dict) else {}
+        cell = props.get("cell", {}) if isinstance(props, dict) else {}
+        base = props.get("base", {}) if isinstance(props, dict) else {}
         if not isinstance(client, dict):
             continue
         hp = _safe_float(client.get("health"), -1.0)
@@ -1086,10 +1134,46 @@ def _snapshot_health_state(entities: Dict[int, Any], time_s: float) -> Dict[str,
             continue
         alive_value = client.get("isAlive")
         alive = bool(alive_value) if alive_value is not None else hp > 0.0
+
+        def _value_active(value: Any, key_hint: str) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                if any(tok in key_hint for tok in ("time", "duration", "left", "active", "burn", "fire", "flood")):
+                    return float(value) > 0.0
+                return False
+            if isinstance(value, list):
+                return any(_value_active(item, key_hint) for item in value)
+            if isinstance(value, dict):
+                return any(_value_active(item, key_hint) for item in value.values())
+            return False
+
+        def _active_damage_flag(include_tokens: tuple[str, ...], exclude_tokens: tuple[str, ...]) -> bool:
+            for src in (client, cell, base):
+                if not isinstance(src, dict):
+                    continue
+                for key, value in src.items():
+                    lk = str(key).lower()
+                    if not any(token in lk for token in include_tokens):
+                        continue
+                    if any(token in lk for token in exclude_tokens):
+                        continue
+                    if _value_active(value, lk):
+                        return True
+            return False
+
+        fire_active = _active_damage_flag(
+            ("fire", "burn"),
+            ("firecontrol", "fire_control", "firemode", "fire_mode", "fire_rate", "firechance", "fire_chance", "fire_resist", "fire_resistance"),
+        )
+        flood_active = _active_damage_flag(("flood",), ("floodable", "flood_chance", "floodchance"))
+
         vehicles[str(int(entity.id))] = {
             "hp": max(0, int(round(hp))),
             "max_hp": max(0, int(round(max_hp))),
             "alive": bool(alive),
+            "on_fire": bool(fire_active),
+            "flooding": bool(flood_active),
         }
 
     if not vehicles:
@@ -1178,6 +1262,8 @@ def _filter_health_timeline(timeline: List[Dict[str, Any]]) -> List[Dict[str, An
                 int((state or {}).get("hp", 0)),
                 int((state or {}).get("max_hp", 0)),
                 int(bool((state or {}).get("alive", False))),
+                int(bool((state or {}).get("on_fire", False))),
+                int(bool((state or {}).get("flooding", False))),
             )
             for entity_key, state in sorted(entities.items(), key=lambda item: int(item[0]))
         )

@@ -33,8 +33,9 @@ QUALITY_SCALE = 1.5
 
 def _battle_duration_seconds(canonical: Dict[str, Any]) -> float:
     battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
+    battle_start = float(canonical.get("stats", {}).get("battle_start_s", 0.0))
     if battle_end > 0:
-        return battle_end
+        return max(0.0, battle_end - max(0.0, battle_start))
     tracks = canonical.get("tracks", {}) or {}
     return max(
         (float(p.get("t", 0.0)) for t in tracks.values() for p in (t.get("points", []) or [])),

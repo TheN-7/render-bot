@@ -27,6 +27,16 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+def _median_value(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[mid])
+    return float((ordered[mid - 1] + ordered[mid]) / 2.0)
+
+
 def _load_ship_cache() -> Dict[str, Any]:
     global _SHIP_CACHE
     if _SHIP_CACHE is not None:
@@ -212,6 +222,62 @@ def _overlap_ratio(a0: float, a1: float, b0: float, b1: float) -> float:
     return overlap / max(1e-6, (a1 - a0))
 
 
+def _smoke_deploy_events(smoke_puffs: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    if not smoke_puffs:
+        return []
+    by_entity: Dict[int, list[float]] = {}
+    for puff in smoke_puffs:
+        if not isinstance(puff, dict):
+            continue
+        entity_id = _safe_int(puff.get("entity_id"))
+        if entity_id is None or entity_id < 0:
+            continue
+        start_time = _safe_float(puff.get("start_time"), 0.0)
+        if start_time <= 0.0:
+            continue
+        by_entity.setdefault(int(entity_id), []).append(float(start_time))
+
+    events: list[Dict[str, Any]] = []
+    gap_s = 6.0
+    tail_s = 2.0
+    for entity_id, times in by_entity.items():
+        if not times:
+            continue
+        times.sort()
+        cluster_start = times[0]
+        last_time = times[0]
+        for t in times[1:]:
+            if (t - last_time) <= gap_s:
+                last_time = t
+                continue
+            end_time = last_time + tail_s
+            if end_time > cluster_start:
+                events.append(
+                    {
+                        "entity_id": int(entity_id),
+                        "kind": "smoke",
+                        "start_time": round(float(cluster_start), 3),
+                        "end_time": round(float(end_time), 3),
+                        "duration_s": round(float(max(0.0, end_time - cluster_start)), 3),
+                    }
+                )
+            cluster_start = t
+            last_time = t
+        end_time = last_time + tail_s
+        if end_time > cluster_start:
+            events.append(
+                {
+                    "entity_id": int(entity_id),
+                    "kind": "smoke",
+                    "start_time": round(float(cluster_start), 3),
+                    "end_time": round(float(end_time), 3),
+                    "duration_s": round(float(max(0.0, end_time - cluster_start)), 3),
+                }
+            )
+    events.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1))))
+    return events
+
+
 def _normalize_control_points(raw_points: Any) -> list[Dict[str, Any]]:
     if not isinstance(raw_points, list):
         return []
@@ -286,10 +352,55 @@ def _normalize_capture_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
                 "team_scores": scores,
                 "team_win_score": _safe_int(row.get("team_win_score")) or 0,
                 "caps": caps,
+                "time_left_s": _safe_float(row.get("time_left_s"), 0.0) if row.get("time_left_s") is not None else None,
+                "time_elapsed_s": _safe_float(row.get("time_elapsed_s"), 0.0) if row.get("time_elapsed_s") is not None else None,
             }
         )
     timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
     return timeline
+
+
+def _estimate_battle_start_from_timer(
+    timeline: list[Dict[str, Any]],
+    full_length_s: Optional[float] = None,
+    use_first_tick: bool = False,
+) -> Optional[float]:
+    if not timeline:
+        return None
+    left_samples: list[tuple[float, float]] = []
+    elapsed_samples: list[tuple[float, float]] = []
+    for row in timeline:
+        if not isinstance(row, dict):
+            continue
+        t = _safe_float(row.get("time_s"), 0.0)
+        tl = row.get("time_left_s")
+        if tl is not None:
+            tl_v = _safe_float(tl, 0.0)
+            if tl_v > 0.0:
+                left_samples.append((t, tl_v))
+        te = row.get("time_elapsed_s")
+        if te is not None:
+            te_v = _safe_float(te, 0.0)
+            if te_v >= 0.0:
+                elapsed_samples.append((t, te_v))
+
+    if left_samples:
+        left_samples.sort(key=lambda item: item[0])
+        max_left = max(tl for _, tl in left_samples)
+        if use_first_tick:
+            for t, tl in left_samples:
+                if tl <= (max_left - 0.5):
+                    return float(t)
+        baseline = float(full_length_s) if full_length_s is not None and full_length_s > 0.0 else float(max_left)
+        candidates = [t - max(0.0, baseline - tl) for t, tl in left_samples]
+        return _median_value(candidates)
+
+    if elapsed_samples:
+        elapsed_samples.sort(key=lambda item: item[0])
+        candidates = [t - te for t, te in elapsed_samples]
+        return _median_value(candidates)
+
+    return None
 
 
 def _normalize_smoke_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
@@ -670,6 +781,8 @@ def _normalize_health_timeline(raw_timeline: Any) -> list[Dict[str, Any]]:
                     "hp": max(0, _safe_int(state.get("hp")) or 0),
                     "max_hp": max(0, _safe_int(state.get("max_hp")) or 0),
                     "alive": bool(state.get("alive", True)),
+                    "on_fire": bool(state.get("on_fire", False)),
+                    "flooding": bool(state.get("flooding", False)),
                 }
         if not entities:
             continue
@@ -770,6 +883,27 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             entities[key]["sunk"] = True
 
     battle_end_s = max((p["t"] for t in tracks.values() for p in t.get("points", [])), default=0.0)
+    min_ally_t = None
+    min_any_t = None
+    for track in tracks.values():
+        points = track.get("points", [])
+        if not isinstance(points, list) or not points:
+            continue
+        team = str(track.get("team") or "").lower()
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            t_raw = point.get("t")
+            if t_raw is None:
+                continue
+            t = _safe_float(t_raw, 0.0)
+            if min_any_t is None or t < min_any_t:
+                min_any_t = t
+            if team in ("ally", "player"):
+                if min_ally_t is None or t < min_ally_t:
+                    min_ally_t = t
+    if min_ally_t is None:
+        min_ally_t = min_any_t
 
     battle_state = extraction.battle_state or {}
     captures_timeline = _normalize_capture_timeline(battle_state.get("captures_timeline", []))
@@ -789,8 +923,36 @@ def _build_canonical(extraction) -> Dict[str, Any]:
     squadron_events = _normalize_squadrons(battle_state.get("squadrons", []), local_team_id, enemy_team_id)
     player_status_meta = battle_state.get("player_status_meta", {}) if isinstance(battle_state.get("player_status_meta"), dict) else {}
 
+    max_left = None
+    for snap in captures_timeline:
+        if not isinstance(snap, dict):
+            continue
+        tl = snap.get("time_left_s")
+        if tl is None:
+            continue
+        tl_v = _safe_float(tl, 0.0)
+        if max_left is None or tl_v > max_left:
+            max_left = tl_v
+
+    full_length_s = None
+    if max_left is not None and max_left >= 1100.0:
+        full_length_s = float(max_left)
+    elif battle_end_s >= 1100.0:
+        full_length_s = 1200.0
+    use_first_tick = bool(full_length_s is not None and max_left is not None and max_left >= (full_length_s - 1.0))
+
+    battle_start_s = 0.0
+    start_from_timer = _estimate_battle_start_from_timer(captures_timeline, full_length_s, use_first_tick)
+    if start_from_timer is not None:
+        battle_start_s = max(0.0, float(start_from_timer))
+    elif min_ally_t is not None:
+        battle_start_s = max(0.0, float(min_ally_t))
+    if battle_end_s > 0.0 and (battle_end_s - battle_start_s) > 1200.0:
+        battle_start_s = max(0.0, float(battle_end_s) - 1200.0)
+
     speed_samples = _speed_samples_from_tracks(tracks)
     heal_from_hp = _heal_events_from_health(health_timeline)
+    smoke_from_puffs = _smoke_deploy_events(smoke_puffs)
     consumable_events: list[Dict[str, Any]] = []
     for raw in raw_consumable_events:
         row = dict(raw)
@@ -862,6 +1024,28 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             break
         if not overlap:
             consumable_events.append(row)
+
+    if smoke_from_puffs:
+        for row in smoke_from_puffs:
+            entity_id = _safe_int(row.get("entity_id"))
+            start_time = _safe_float(row.get("start_time"), 0.0)
+            end_time = _safe_float(row.get("end_time"), 0.0)
+            if entity_id is None or end_time <= start_time:
+                continue
+            overlap = False
+            for existing in consumable_events:
+                if existing.get("kind") != "smoke":
+                    continue
+                if int(existing.get("entity_id", -1)) != int(entity_id):
+                    continue
+                e0 = _safe_float(existing.get("start_time"), 0.0)
+                e1 = _safe_float(existing.get("end_time"), 0.0)
+                if e1 < start_time or e0 > end_time:
+                    continue
+                overlap = True
+                break
+            if not overlap:
+                consumable_events.append(row)
 
     if heal_from_hp:
         for row in heal_from_hp:
@@ -1015,6 +1199,8 @@ def _build_canonical(extraction) -> Dict[str, Any]:
             "tracked_entities": len(tracks),
             "track_points": sum(len(t.get("points", [])) for t in tracks.values()),
             "battle_end_s": battle_end_s,
+            "battle_start_s": battle_start_s,
+            "battle_duration_s": max(0.0, float(battle_end_s) - float(battle_start_s)),
             "deaths": len(deaths),
             "kills": len(kill_feed),
             "chat_messages": len(chat_feed),

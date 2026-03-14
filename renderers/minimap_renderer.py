@@ -345,6 +345,40 @@ def _consumables_dir() -> Path:
     return _root_dir() / "gui" / "consumables"
 
 
+def _status_icons_dir() -> Path:
+    return _root_dir() / "gui" / "battle_hud" / "own_ship_health"
+
+
+def _load_status_icon(kind: str, size: int) -> Image.Image | None:
+    if size <= 0:
+        return None
+    key = (kind, int(size))
+    cached = _STATUS_ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
+    mapping = {
+        "fire": "icon_fire_small.png",
+        "flood": "icon_flooding_small.png",
+    }
+    filename = mapping.get(kind)
+    if not filename:
+        return None
+    path = _status_icons_dir() / filename
+    if not path.exists():
+        return None
+    try:
+        icon = Image.open(path).convert("RGBA")
+    except Exception:
+        return None
+    target_h = max(8, int(size))
+    scale = target_h / max(1, icon.height)
+    target_w = max(1, int(round(icon.width * scale)))
+    if icon.size != (target_w, target_h):
+        icon = icon.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    _STATUS_ICON_CACHE[key] = icon
+    return icon
+
+
 def _load_consumable_icon(kind: str, size: int) -> Image.Image | None:
     if size <= 0:
         return None
@@ -357,7 +391,7 @@ def _load_consumable_icon(kind: str, size: int) -> Image.Image | None:
         "hydro": "consumable_PCY016_SonarSearchPremium.png",
         "smoke": "consumable_PCY006_SmokeGenerator.png",
         "heal": "consumable_PCY002_RegenCrew.png",
-        "engine": "consumable_PCY007_SpeedBooster.png",
+        "engine": "consumable_PXY027_SpeedBooster.png",
     }
     filename = mapping.get(kind)
     if not filename:
@@ -2362,12 +2396,14 @@ def _extract_health_timelines(canonical: Dict[str, Any]) -> Dict[str, Dict[str, 
             if not isinstance(state, dict):
                 continue
             key = str(entity_key)
-            timeline = timelines.setdefault(key, {"times": [], "hp": [], "alive": [], "max_hp": 0})
+            timeline = timelines.setdefault(key, {"times": [], "hp": [], "alive": [], "fire": [], "flood": [], "max_hp": 0})
             hp = max(0, _safe_int(state.get("hp")) or 0)
             max_hp = max(0, _safe_int(state.get("max_hp")) or 0)
             timeline["times"].append(t)
             timeline["hp"].append(hp)
             timeline["alive"].append(bool(state.get("alive", True)))
+            timeline["fire"].append(bool(state.get("on_fire", False)))
+            timeline["flood"].append(bool(state.get("flooding", False)))
             timeline["max_hp"] = max(int(timeline.get("max_hp", 0) or 0), max_hp)
     return timelines
 
@@ -2379,12 +2415,21 @@ def _health_state_at(health_timelines: Dict[str, Dict[str, Any]], entity_key: An
     times = timeline.get("times", [])
     hp_values = timeline.get("hp", [])
     alive_values = timeline.get("alive", [])
+    fire_values = timeline.get("fire", [])
+    flood_values = timeline.get("flood", [])
     if not isinstance(times, list) or not times:
         return None
     idx = bisect_right(times, t) - 1
     if idx < 0:
         idx = 0
-    idx = min(idx, len(times) - 1, len(hp_values) - 1, len(alive_values) - 1)
+    idx = min(
+        idx,
+        len(times) - 1,
+        len(hp_values) - 1,
+        len(alive_values) - 1,
+        len(fire_values) - 1 if isinstance(fire_values, list) and fire_values else len(times) - 1,
+        len(flood_values) - 1 if isinstance(flood_values, list) and flood_values else len(times) - 1,
+    )
     max_hp = max(0, int(timeline.get("max_hp", 0) or 0))
     hp = max(0, int(hp_values[idx]))
     ratio = float(hp) / float(max_hp) if max_hp > 0 else 0.0
@@ -2393,6 +2438,8 @@ def _health_state_at(health_timelines: Dict[str, Dict[str, Any]], entity_key: An
         "max_hp": max_hp,
         "alive": bool(alive_values[idx]),
         "ratio": max(0.0, min(1.0, ratio)),
+        "on_fire": bool(fire_values[idx]) if isinstance(fire_values, list) and fire_values else False,
+        "flooding": bool(flood_values[idx]) if isinstance(flood_values, list) and flood_values else False,
     }
 
 
@@ -3923,6 +3970,29 @@ def _draw_player_status_panel(
             local = ImageDraw.Draw(img)
             _draw_ship_icon(local, preview_x + preview_w // 2, preview_y + preview_h // 2, ship_code, fallback_color, (220, 220, 220), size=max(10, min(preview_w, preview_h) // 4))
 
+    if health is not None:
+        status_icons: List[Image.Image] = []
+        icon_size = max(12, min(26, int(min(preview_w, preview_h) * 0.22)))
+        if bool(health.get("on_fire", False)):
+            icon = _load_status_icon("fire", icon_size)
+            if icon is not None:
+                status_icons.append(icon)
+        if bool(health.get("flooding", False)):
+            icon = _load_status_icon("flood", icon_size)
+            if icon is not None:
+                status_icons.append(icon)
+        if status_icons:
+            spacing = max(2, icon_size // 6)
+            total_w = sum(icon.width for icon in status_icons) + spacing * (len(status_icons) - 1)
+            start_x = preview_rect[0] + 6
+            if start_x + total_w > preview_rect[2] - 6:
+                start_x = max(preview_rect[0] + 2, preview_rect[2] - total_w - 6)
+            y = preview_rect[3] - icon_size - 6
+            x = start_x
+            for icon in status_icons:
+                img.paste(icon, (int(x), int(y)), icon)
+                x += icon.width + spacing
+
     text_x = preview_rect[2] + 12
     info_y = y0 + 28
     line_gap = max(16, font_size + 4)
@@ -5045,7 +5115,9 @@ def _draw_smoke_overlay(
 
 def estimate_animation_frame_count(canonical: Dict[str, Any], speed: float = 3.0) -> int:
     step = max(0.05, float(speed))
-    max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
+    battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
+    battle_start = float(canonical.get("stats", {}).get("battle_start_s", 0.0))
+    max_clock = max(0.0, battle_end - max(0.0, battle_start))
     if max_clock <= 0:
         tracks = canonical.get("tracks", {}) or {}
         max_clock = max(
@@ -5068,9 +5140,13 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     player_status_timeline = _extract_player_status_timeline(canonical)
     layout = _render_layout(render_tracks, canvas_size)
     prepared_tracks = _prepare_track_render_data(render_tracks, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
-    max_clock = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
-    if max_clock <= 0:
-        max_clock = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
+    battle_start = float(canonical.get("stats", {}).get("battle_start_s", 0.0))
+    battle_end = float(canonical.get("stats", {}).get("battle_end_s", 0.0))
+    if battle_end <= 0:
+        battle_end = max((float(p.get("t", 0.0)) for t in render_tracks.values() for p in t.get("points", [])), default=0.0)
+    if battle_start < 0.0 or battle_start >= battle_end:
+        battle_start = 0.0
+    max_clock = max(0.0, float(battle_end) - float(battle_start))
     spot_timeout = max(6.0, step * 1.5)
     capture_timeline = _capture_timeline(canonical)
     smoke_timeline = _smoke_timeline(canonical)
@@ -5104,16 +5180,17 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     t = 0.0
     frame_idx = 0
     while t <= max_clock + step:
+        t_replay = t + battle_start
         img = base_frame.copy()
         draw = ImageDraw.Draw(img)
-        capture_snapshot = _capture_snapshot_at(capture_timeline, t)
-        smoke_snapshot = _smoke_snapshot_at(smoke_timeline, t)
+        capture_snapshot = _capture_snapshot_at(capture_timeline, t_replay)
+        smoke_snapshot = _smoke_snapshot_at(smoke_timeline, t_replay)
         _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
-        _draw_sensor_overlay(img, draw, sensor_events, render_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect, spot_timeout=spot_timeout)
-        _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
-        _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
-        _draw_squadrons(img, draw, squadron_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_sensor_overlay(img, draw, sensor_events, render_tracks, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect, spot_timeout=spot_timeout)
+        _draw_artillery_traces(img, artillery_traces, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_torpedoes(draw, torpedo_tracks, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_squadrons(img, draw, squadron_tracks, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_squadron_legend(img, squadron_tracks, canvas_size, margin, map_rect=map_rect)
 
         for entity_key, prepared in prepared_tracks.items():
@@ -5125,7 +5202,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 continue
             ekey = str(entity_key)
             side = _color_side(track)
-            idx = bisect_right(times, t) - 1
+            idx = bisect_right(times, t_replay) - 1
             synthetic_start = False
             if idx < 0:
                 if side == "enemy" and not ever_spotted_memory.get(ekey, False):
@@ -5135,8 +5212,8 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 idx = 0
                 synthetic_start = True
             death_t = death_times.get(str(entity_key))
-            health = _health_state_at(health_timelines, entity_key, t)
-            sunk = (death_t is not None and t >= death_t) or (health is not None and not bool(health.get("alive", True)))
+            health = _health_state_at(health_timelines, entity_key, t_replay)
+            sunk = (death_t is not None and t_replay >= death_t) or (health is not None and not bool(health.get("alive", True)))
             if sunk and death_t is not None:
                 idx = max(0, bisect_right(times, float(death_t)) - 1)
                 synthetic_start = False
@@ -5148,7 +5225,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
             else:
                 heading_deg = _stable_heading_deg(points, previous=prev_heading, max_step_deg=32.0)
             heading_memory[str(entity_key)] = heading_deg
-            spotted = (t - last_t) <= spot_timeout and not synthetic_start and not bool(track.get("always_unspotted", False))
+            spotted = (t_replay - last_t) <= spot_timeout and not synthetic_start and not bool(track.get("always_unspotted", False))
             if spotted:
                 ever_spotted_memory[ekey] = True
             ever_spotted = ever_spotted_memory.get(ekey, False)
@@ -5179,8 +5256,8 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 size=marker_size,
                 sunk=sunk,
                 consumable_kind=(
-                    _active_sensor_kind(sensor_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t)
-                    or _active_consumable_kind(consumable_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t)
+                    _active_sensor_kind(sensor_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t_replay)
+                    or _active_consumable_kind(consumable_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t_replay)
                 ),
             )
             if health is not None:
@@ -5202,11 +5279,11 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
             fade_frames = max(1, result_frames // 3)
             alpha = int(255 * min(1.0, float(frame_idx - (total_frames - result_frames) + 1) / float(fade_frames)))
             _draw_battle_result_overlay(img, canonical, canvas_size, alpha=alpha)
-        status = _player_status_at(player_status_timeline, t)
+        status = _player_status_at(player_status_timeline, t_replay)
         frame_layout = _layout_for_player_status(layout, status)
-        _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t, frame_layout)
-        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t, frame_layout)
-        _draw_lineup_panel(img, draw, frame_layout, current_t=t, death_times=death_times)
+        _draw_player_status_panel(img, draw, canonical, render_tracks, health_timelines, player_status_timeline, t_replay, frame_layout)
+        _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, t_replay, frame_layout)
+        _draw_lineup_panel(img, draw, frame_layout, current_t=t_replay, death_times=death_times)
         yield img
         t += step
         frame_idx += 1
@@ -5215,4 +5292,5 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
 def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True) -> List[Image.Image]:
     return list(iter_animation_frames(canonical, canvas_size=canvas_size, speed=speed, show_grid=show_grid))
 _CONSUMABLE_ICON_CACHE: Dict[Tuple[str, int], Image.Image] = {}
+_STATUS_ICON_CACHE: Dict[Tuple[str, int], Image.Image] = {}
 _AIRCRAFT_PARAMS_DEBUG: Dict[str, Dict[str, Any]] = {}
