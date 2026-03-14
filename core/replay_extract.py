@@ -8,6 +8,8 @@ from .replay_unpack_adapter import read_replay, decode_packets, extract_events
 from .replay_schema import validate_extraction, to_legacy_schema
 from utils.map_names import get_battlearena_entry, get_map_name
 
+_SHIP_CACHE: Optional[Dict[str, Any]] = None
+
 
 def _safe_int(value: Any) -> Optional[int]:
     try:
@@ -23,6 +25,191 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return float(default)
+
+
+def _load_ship_cache() -> Dict[str, Any]:
+    global _SHIP_CACHE
+    if _SHIP_CACHE is not None:
+        return _SHIP_CACHE
+    path = Path(__file__).resolve().parent.parent / "ships_cache.json"
+    if not path.exists():
+        _SHIP_CACHE = {}
+        return _SHIP_CACHE
+    try:
+        _SHIP_CACHE = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        _SHIP_CACHE = {}
+    return _SHIP_CACHE
+
+
+def _ship_max_speed(ship_id: Optional[int]) -> Optional[float]:
+    if ship_id is None:
+        return None
+    cache = _load_ship_cache()
+    entry = cache.get(str(int(ship_id))) if cache else None
+    if not isinstance(entry, dict):
+        return None
+    speed = (
+        (entry.get("stats") or {})
+        .get("mobility", {})
+        .get("max_speed")
+    )
+    try:
+        return float(speed)
+    except (TypeError, ValueError):
+        return None
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    items = sorted(values)
+    mid = len(items) // 2
+    if len(items) % 2:
+        return float(items[mid])
+    return float(items[mid - 1] + items[mid]) / 2.0
+
+
+def _speed_samples_from_tracks(tracks: Dict[str, Dict[str, Any]]) -> Dict[str, list[Dict[str, float]]]:
+    samples: Dict[str, list[Dict[str, float]]] = {}
+    for entity_key, track in tracks.items():
+        points = track.get("points", [])
+        if not isinstance(points, list) or len(points) < 2:
+            continue
+        last_t = None
+        last_x = None
+        last_z = None
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            t_raw = point.get("t")
+            x_raw = point.get("x")
+            z_raw = point.get("z")
+            if t_raw is None or x_raw is None or z_raw is None:
+                continue
+            t = _safe_float(t_raw, 0.0)
+            x = _safe_float(x_raw, 0.0)
+            z = _safe_float(z_raw, 0.0)
+            if last_t is not None:
+                dt = t - last_t
+                if dt > 1e-3:
+                    dx = x - float(last_x)
+                    dz = z - float(last_z)
+                    dist = (dx * dx + dz * dz) ** 0.5
+                    speed = dist / dt
+                    if 0.0 <= speed <= 60.0:
+                        samples.setdefault(str(entity_key), []).append({"t": float(t), "speed": float(speed)})
+            last_t = t
+            last_x = x
+            last_z = z
+    for entity_key, rows in samples.items():
+        rows.sort(key=lambda item: float(item.get("t", 0.0)))
+    return samples
+
+
+def _speed_boost_window(samples: list[Dict[str, float]], start_time: float, end_time: float) -> Optional[tuple[float, float]]:
+    if not samples or end_time <= start_time:
+        return None
+    window = [row for row in samples if start_time <= float(row.get("t", 0.0)) <= end_time]
+    if len(window) < 2:
+        return None
+    baseline_window = [row for row in samples if (start_time - 12.0) <= float(row.get("t", 0.0)) < start_time]
+    if len(baseline_window) < 3:
+        baseline_window = [row for row in samples if float(row.get("t", 0.0)) < start_time]
+    if len(baseline_window) < 3:
+        return None
+    baseline = _median([float(row.get("speed", 0.0)) for row in baseline_window])
+    if baseline <= 0.05:
+        baseline = _median([float(row.get("speed", 0.0)) for row in window])
+    if baseline <= 0.05:
+        return None
+    threshold = max(0.8, baseline * 0.06)
+    boosted = [row for row in window if float(row.get("speed", 0.0)) >= baseline + threshold]
+    if not boosted:
+        return None
+    start_t = float(boosted[0].get("t", start_time))
+    end_t = float(boosted[-1].get("t", end_time))
+    if end_t <= start_t:
+        return None
+    return start_t, end_t
+
+
+def _engine_events_from_speed_samples(
+    speed_samples: Dict[str, list[Dict[str, float]]],
+    entities: Dict[str, Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    if not speed_samples or not entities:
+        return []
+    events: list[Dict[str, Any]] = []
+    for entity_key, samples in speed_samples.items():
+        if not samples:
+            continue
+        ship_id = _safe_int((entities.get(str(entity_key)) or {}).get("ship_id"))
+        max_speed = _ship_max_speed(ship_id)
+        if not max_speed or max_speed <= 0.0:
+            continue
+        threshold = max_speed * 1.02
+        active_start = None
+        last_t = None
+        for row in samples:
+            t = float(row.get("t", 0.0) or 0.0)
+            speed = float(row.get("speed", 0.0) or 0.0)
+            if speed >= threshold:
+                if active_start is None:
+                    active_start = t
+                last_t = t
+                continue
+            if active_start is None:
+                continue
+            if last_t is not None and (t - last_t) > 3.0:
+                if (last_t - active_start) >= 4.0:
+                    events.append(
+                        {
+                            "entity_id": _safe_int(entity_key) or -1,
+                            "kind": "engine",
+                            "start_time": round(float(active_start), 3),
+                            "end_time": round(float(last_t), 3),
+                            "duration_s": round(float(max(0.0, last_t - active_start)), 3),
+                        }
+                    )
+                active_start = None
+                last_t = None
+        if active_start is not None and last_t is not None and (last_t - active_start) >= 4.0:
+            events.append(
+                {
+                    "entity_id": _safe_int(entity_key) or -1,
+                    "kind": "engine",
+                    "start_time": round(float(active_start), 3),
+                    "end_time": round(float(last_t), 3),
+                    "duration_s": round(float(max(0.0, last_t - active_start)), 3),
+                }
+            )
+    events.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1))))
+    return events
+
+
+def _find_overlap_window(events: list[Dict[str, Any]], entity_id: int, start_time: float, end_time: float) -> Optional[tuple[float, float]]:
+    if not events or end_time <= start_time:
+        return None
+    best = None
+    best_overlap = 0.0
+    for row in events:
+        if int(row.get("entity_id", -1)) != int(entity_id):
+            continue
+        s0 = _safe_float(row.get("start_time"), 0.0)
+        s1 = _safe_float(row.get("end_time"), 0.0)
+        overlap = max(0.0, min(end_time, s1) - max(start_time, s0))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best = (s0, s1)
+    return best
+
+
+def _overlap_ratio(a0: float, a1: float, b0: float, b1: float) -> float:
+    if a1 <= a0:
+        return 0.0
+    overlap = max(0.0, min(a1, b1) - max(a0, b0))
+    return overlap / max(1e-6, (a1 - a0))
 
 
 def _normalize_control_points(raw_points: Any) -> list[Dict[str, Any]]:
@@ -215,7 +402,7 @@ def _normalize_consumable_events(raw_events: Any) -> list[Dict[str, Any]]:
         if not isinstance(row, dict):
             continue
         kind = str(row.get("kind") or "").strip().lower()
-        if kind not in ("heal", "engine", "smoke"):
+        if kind not in ("heal", "engine", "smoke", "unknown"):
             continue
         entity_id = _safe_int(row.get("entity_id"))
         if entity_id is None or entity_id < 0:
@@ -589,7 +776,7 @@ def _build_canonical(extraction) -> Dict[str, Any]:
     smoke_timeline = _normalize_smoke_timeline(battle_state.get("smoke_timeline", []))
     smoke_puffs = _normalize_smoke_puffs(battle_state.get("smoke_puffs", []))
     sensor_events = _normalize_sensor_events(battle_state.get("sensor_events", []))
-    consumable_events = _normalize_consumable_events(battle_state.get("consumable_events", []))
+    raw_consumable_events = _normalize_consumable_events(battle_state.get("consumable_events", []))
     artillery_fires = _normalize_artillery_fires(battle_state.get("artillery_shots", []))
     torpedo_points = _normalize_torpedo_points(battle_state.get("torpedo_points", []), owner_team)
     kill_feed = _normalize_kill_feed(battle_state.get("kill_feed", []))
@@ -602,13 +789,86 @@ def _build_canonical(extraction) -> Dict[str, Any]:
     squadron_events = _normalize_squadrons(battle_state.get("squadrons", []), local_team_id, enemy_team_id)
     player_status_meta = battle_state.get("player_status_meta", {}) if isinstance(battle_state.get("player_status_meta"), dict) else {}
 
+    speed_samples = _speed_samples_from_tracks(tracks)
     heal_from_hp = _heal_events_from_health(health_timeline)
+    consumable_events: list[Dict[str, Any]] = []
+    for raw in raw_consumable_events:
+        row = dict(raw)
+        kind = str(row.get("kind") or "").lower()
+        entity_id = _safe_int(row.get("entity_id"))
+        start_time = _safe_float(row.get("start_time"), 0.0)
+        end_time = _safe_float(row.get("end_time"), 0.0)
+        if entity_id is None or end_time <= start_time:
+            continue
+        if kind == "unknown":
+            if heal_from_hp:
+                window = _find_overlap_window(heal_from_hp, int(entity_id), start_time, end_time)
+                if window is not None:
+                    start_t, end_t = window
+                    row["kind"] = "heal"
+                    row["start_time"] = round(float(start_t), 3)
+                    row["end_time"] = round(float(end_t), 3)
+                    row["duration_s"] = round(float(max(0.0, end_t - start_t)), 3)
+                    consumable_events.append(row)
+                    continue
+            samples = speed_samples.get(str(entity_id), [])
+            window = _speed_boost_window(samples, start_time, end_time) if samples else None
+            if window is not None:
+                start_t, end_t = window
+                row["kind"] = "engine"
+                row["start_time"] = round(float(start_t), 3)
+                row["end_time"] = round(float(end_t), 3)
+                row["duration_s"] = round(float(max(0.0, end_t - start_t)), 3)
+                consumable_events.append(row)
+                continue
+            continue
+        if kind == "heal" and heal_from_hp:
+            window = _find_overlap_window(heal_from_hp, int(entity_id), start_time, end_time)
+            if window is not None:
+                start_t, end_t = window
+                row["start_time"] = round(float(start_t), 3)
+                row["end_time"] = round(float(end_t), 3)
+                row["duration_s"] = round(float(max(0.0, end_t - start_t)), 3)
+        elif kind == "engine":
+            samples = speed_samples.get(str(entity_id), [])
+            window = _speed_boost_window(samples, start_time, end_time) if samples else None
+            if window is not None:
+                start_t, end_t = window
+                row["start_time"] = round(float(start_t), 3)
+                row["end_time"] = round(float(end_t), 3)
+                row["duration_s"] = round(float(max(0.0, end_t - start_t)), 3)
+        consumable_events.append(row)
+
+    speed_engine = _engine_events_from_speed_samples(speed_samples, entities)
+    for row in speed_engine:
+        entity_id = _safe_int(row.get("entity_id"))
+        if entity_id is None:
+            continue
+        start_time = _safe_float(row.get("start_time"), 0.0)
+        end_time = _safe_float(row.get("end_time"), 0.0)
+        if end_time <= start_time:
+            continue
+        overlap = False
+        for existing in consumable_events:
+            if existing.get("kind") != "engine":
+                continue
+            if int(existing.get("entity_id", -1)) != int(entity_id):
+                continue
+            e0 = _safe_float(existing.get("start_time"), 0.0)
+            e1 = _safe_float(existing.get("end_time"), 0.0)
+            if e1 < start_time or e0 > end_time:
+                continue
+            overlap = True
+            break
+        if not overlap:
+            consumable_events.append(row)
+
     if heal_from_hp:
         for row in heal_from_hp:
-            entity_id = row.get("entity_id")
-            start_time = row.get("start_time")
-            end_time = row.get("end_time")
-            if entity_id is None or start_time is None or end_time is None:
+            entity_id = _safe_int(row.get("entity_id"))
+            start_time = _safe_float(row.get("start_time"), 0.0)
+            end_time = _safe_float(row.get("end_time"), 0.0)
+            if entity_id is None or end_time <= start_time:
                 continue
             overlap = False
             for existing in consumable_events:
@@ -616,13 +876,16 @@ def _build_canonical(extraction) -> Dict[str, Any]:
                     continue
                 if int(existing.get("entity_id", -1)) != int(entity_id):
                     continue
-                if float(existing.get("end_time", 0.0)) < float(start_time) or float(existing.get("start_time", 0.0)) > float(end_time):
+                e0 = _safe_float(existing.get("start_time"), 0.0)
+                e1 = _safe_float(existing.get("end_time"), 0.0)
+                if e1 < start_time or e0 > end_time:
                     continue
                 overlap = True
                 break
             if not overlap:
                 consumable_events.append(row)
-        consumable_events.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1)), str(item.get("kind", ""))))
+
+    consumable_events.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1)), str(item.get("kind", ""))))
 
     if consumable_events and sensor_events:
         filtered_sensors: list[Dict[str, Any]] = []
@@ -652,6 +915,38 @@ def _build_canonical(extraction) -> Dict[str, Any]:
                 overlaps_heal = True
                 break
             if not overlaps_heal:
+                filtered_sensors.append(sensor)
+        sensor_events = filtered_sensors
+
+    if sensor_events and heal_from_hp:
+        filtered_sensors = []
+        for sensor in sensor_events:
+            kind = str(sensor.get("kind") or "").lower()
+            if kind not in ("radar", "hydro"):
+                filtered_sensors.append(sensor)
+                continue
+            entity_id = _safe_int(sensor.get("entity_id"))
+            if entity_id is None:
+                filtered_sensors.append(sensor)
+                continue
+            s0 = _safe_float(sensor.get("start_time"), 0.0)
+            s1 = _safe_float(sensor.get("end_time"), 0.0)
+            if s1 <= s0:
+                continue
+            drop = False
+            for heal in heal_from_hp:
+                if int(heal.get("entity_id", -1)) != int(entity_id):
+                    continue
+                h0 = _safe_float(heal.get("start_time"), 0.0)
+                h1 = _safe_float(heal.get("end_time"), 0.0)
+                if h1 <= h0:
+                    continue
+                ratio = _overlap_ratio(s0, s1, h0, h1)
+                duration_match = abs((s1 - s0) - (h1 - h0)) <= 5.0
+                if ratio >= 0.7 and duration_match:
+                    drop = True
+                    break
+            if not drop:
                 filtered_sensors.append(sensor)
         sensor_events = filtered_sensors
 

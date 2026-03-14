@@ -1688,6 +1688,7 @@ def _extract_battle_overlay(
         radar_variant = _choose_consumable_variant("radar", ship_info) if ship_info else None
         sonar_variant = _choose_consumable_variant("hydro", ship_info) if ship_info else None
         chosen_variant = None
+        sensor_fallback = False
         if kind is None:
             defs = consumable_defs_by_entity.get(int(entity_id), {})
             kinds = list(defs.get("by_kind", {}).keys())
@@ -1696,9 +1697,11 @@ def _extract_battle_overlay(
             elif radar_variant and not sonar_variant:
                 kind = "radar"
                 chosen_variant = radar_variant
+                sensor_fallback = True
             elif sonar_variant and not radar_variant:
                 kind = "hydro"
                 chosen_variant = sonar_variant
+                sensor_fallback = True
         duration_s = 0.0
         if len(args) > 1:
             duration_s = _safe_float(args[1], 0.0)
@@ -1765,15 +1768,27 @@ def _extract_battle_overlay(
                         # Only accept this consumable if duration roughly matches the variant.
                         ratio = float(duration_s) / float(variant_duration)
                         if ratio < 0.90 or ratio > 1.25:
-                            return
+                            if sensor_fallback:
+                                kind = None
+                                chosen_variant = None
+                            else:
+                                return
                         if low_confidence:
                             tight = abs(float(duration_s) - float(variant_duration)) <= max(0.5, float(variant_duration) * 0.05)
                             if not tight:
-                                return
-                            low_confidence_reason = "duration_only"
+                                if sensor_fallback:
+                                    kind = None
+                                    chosen_variant = None
+                                else:
+                                    return
+                            else:
+                                low_confidence_reason = "duration_only"
             if chosen_variant is None:
-                # No reliable match for this ship/consumable; skip rendering.
-                return
+                if sensor_fallback:
+                    kind = None
+                else:
+                    # No reliable match for this ship/consumable; skip rendering.
+                    return
         if kind in ("heal", "engine", "smoke"):
             if duration_s <= 0.0:
                 return
@@ -1782,6 +1797,18 @@ def _extract_battle_overlay(
                 {
                     "entity_id": int(entity_id),
                     "kind": str(kind),
+                    "start_time": start_t,
+                    "duration_s": round(float(duration_s), 3),
+                    "end_time": round(float(start_t + duration_s), 3),
+                }
+            )
+            return
+        if kind is None and duration_s > 0.0:
+            start_t = round(float(packet_time_ref[0]), 3)
+            consumable_events.append(
+                {
+                    "entity_id": int(entity_id),
+                    "kind": "unknown",
                     "start_time": start_t,
                     "duration_s": round(float(duration_s), 3),
                     "end_time": round(float(start_t + duration_s), 3),

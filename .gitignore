@@ -43,11 +43,6 @@ _debug_frame.png
 content/*
 !content/overviewmaps.txt
 !content/wg_battlearenas_cache.json
-!content/gameparams_consumables.json
-!ships_cache.json
-!content/aircraft_params_debug.json
-!aircraft_params.json
-!content/overviewmaps.txt
 
 # gui/: keep only the assets the renderer uses; ignore everything else
 gui/*
