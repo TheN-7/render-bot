@@ -153,6 +153,15 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return float(default)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 def _median_value(values: List[int]) -> float:
     if not values:
         return 0.0
@@ -330,6 +339,43 @@ def _kill_icon_cache_dir() -> Path:
     p = _root_dir() / "content" / "sessionstats_kill_icons"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _consumables_dir() -> Path:
+    return _root_dir() / "gui" / "consumables"
+
+
+def _load_consumable_icon(kind: str, size: int) -> Image.Image | None:
+    if size <= 0:
+        return None
+    key = (kind, int(size))
+    cached = _CONSUMABLE_ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
+    mapping = {
+        "radar": "consumable_PCY020_RLSSearchPremium.png",
+        "hydro": "consumable_PCY016_SonarSearchPremium.png",
+        "smoke": "consumable_PCY006_SmokeGenerator.png",
+        "heal": "consumable_PCY002_RegenCrew.png",
+        "engine": "consumable_PCY007_SpeedBooster.png",
+    }
+    filename = mapping.get(kind)
+    if not filename:
+        return None
+    path = _consumables_dir() / filename
+    if not path.exists():
+        return None
+    try:
+        icon = Image.open(path).convert("RGBA")
+    except Exception:
+        return None
+    target_h = max(8, int(size))
+    scale = target_h / max(1, icon.height)
+    target_w = max(1, int(round(icon.width * scale)))
+    if icon.size != (target_w, target_h):
+        icon = icon.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    _CONSUMABLE_ICON_CACHE[key] = icon
+    return icon
 
 
 def _map_cache_dir() -> Path:
@@ -3675,6 +3721,7 @@ def _draw_ship_marker(
     marker_label: Any,
     size: int,
     sunk: bool = False,
+    consumable_kind: Optional[str] = None,
 ) -> None:
     icon = _ship_marker_image(ship_type, code, color, size, sunk, _heading_bucket(heading_deg))
     x = cx - icon.width // 2
@@ -3689,6 +3736,14 @@ def _draw_ship_marker(
             tx = cx - label.width // 2
             ty = cy - size - label.height - 4
             img.paste(label, (tx, ty), label)
+
+    if consumable_kind:
+        icon_size = max(10, int(size * 2))
+        cicon = _load_consumable_icon(consumable_kind, icon_size)
+        if cicon is not None:
+            ix = cx - cicon.width // 2
+            iy = cy + size + 2
+            img.paste(cicon, (ix, iy), cicon)
 
 
 def _draw_hp_bar(
@@ -3717,6 +3772,69 @@ def _draw_hp_bar(
     inner_bottom = bottom - 1
     inner_right = inner_left + max(1, int((width - 2) * ratio))
     draw.rectangle([inner_left, inner_top, inner_right, inner_bottom], fill=fill_color)
+
+
+def _active_sensor_kind(sensor_by_entity: Dict[int, List[Dict[str, Any]]], entity_id: int, t: float) -> Optional[str]:
+    events = sensor_by_entity.get(int(entity_id), [])
+    active_kind = None
+    for event in events:
+        start_time = float(event.get("start_time", 0.0))
+        end_time = float(event.get("end_time", 0.0))
+        if t < start_time or t > end_time:
+            continue
+        kind = str(event.get("kind") or "").lower()
+        if kind == "radar":
+            return "radar"
+        if kind == "hydro":
+            active_kind = "hydro"
+    return active_kind
+
+
+def _active_smoke_entities(snapshot: Optional[Dict[str, Any]]) -> set[int]:
+    active: set[int] = set()
+    if not snapshot or not isinstance(snapshot, dict):
+        return active
+    smokes = snapshot.get("smokes", [])
+    if not isinstance(smokes, list):
+        return active
+    for smoke in smokes:
+        if not isinstance(smoke, dict):
+            continue
+        if not bool(smoke.get("active", True)):
+            continue
+        entity_id = _safe_int(smoke.get("entity_id"))
+        if entity_id is None:
+            continue
+        active.add(int(entity_id))
+    return active
+
+
+def _active_consumable_kind(consumable_by_entity: Dict[int, List[Dict[str, Any]]], entity_id: int, t: float) -> Optional[str]:
+    events = consumable_by_entity.get(int(entity_id), [])
+    if not events:
+        return None
+    active_heal = False
+    active_engine = False
+    active_smoke = False
+    for event in events:
+        start_time = float(event.get("start_time", 0.0))
+        end_time = float(event.get("end_time", 0.0))
+        if t < start_time or t > end_time:
+            continue
+        kind = str(event.get("kind") or "").lower()
+        if kind == "heal":
+            active_heal = True
+        elif kind == "engine":
+            active_engine = True
+        elif kind == "smoke":
+            active_smoke = True
+    if active_heal:
+        return "heal"
+    if active_smoke:
+        return "smoke"
+    if active_engine:
+        return "engine"
+    return None
 
 
 def _entity_track_for_player(render_tracks: Dict[str, Dict[str, Any]], player_name: str, entity_key: str = "") -> tuple[str, Dict[str, Any]] | tuple[str, None]:
@@ -4102,6 +4220,70 @@ def _smoke_timeline(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
     timeline.sort(key=lambda item: float(item.get("time_s", 0.0)))
     return timeline
+
+
+def _extract_sensor_events(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("sensors", [])
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind") or "").strip().lower()
+        if kind not in ("radar", "hydro"):
+            continue
+        entity_id = _safe_int(row.get("entity_id"))
+        if entity_id is None:
+            continue
+        radius = _safe_float(row.get("radius"), 0.0)
+        start_time = _safe_float(row.get("start_time"), 0.0)
+        end_time = _safe_float(row.get("end_time"), 0.0)
+        if radius <= 0.0 or end_time <= start_time:
+            continue
+        out.append(
+            {
+                "entity_id": int(entity_id),
+                "kind": kind,
+                "radius": float(radius),
+                "start_time": float(start_time),
+                "end_time": float(end_time),
+            }
+        )
+    out.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1)), str(item.get("kind", ""))))
+    return out
+
+
+def _extract_consumable_events(canonical: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = canonical.get("events", {}) or {}
+    raw = events.get("consumables", [])
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("kind") or "").strip().lower()
+        if kind not in ("heal", "engine", "smoke"):
+            continue
+        entity_id = _safe_int(row.get("entity_id"))
+        if entity_id is None:
+            continue
+        start_time = _safe_float(row.get("start_time"), 0.0)
+        end_time = _safe_float(row.get("end_time"), 0.0)
+        if end_time <= start_time:
+            continue
+        out.append(
+            {
+                "entity_id": int(entity_id),
+                "kind": kind,
+                "start_time": float(start_time),
+                "end_time": float(end_time),
+            }
+        )
+    out.sort(key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1)), str(item.get("kind", ""))))
+    return out
 
 
 def _smoke_snapshot_at(timeline: List[Dict[str, Any]], t: float) -> Optional[Dict[str, Any]]:
@@ -4595,14 +4777,29 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     spot_timeout = 10.0
     capture_timeline = _capture_timeline(canonical)
     smoke_timeline = _smoke_timeline(canonical)
+    sensor_events = _extract_sensor_events(canonical)
+    consumable_events = _extract_consumable_events(canonical)
     capture_snapshot = _capture_snapshot_at(capture_timeline, battle_end)
     smoke_snapshot = _smoke_snapshot_at(smoke_timeline, battle_end)
+    sensor_by_entity: Dict[int, List[Dict[str, Any]]] = {}
+    for row in sensor_events:
+        eid = _safe_int(row.get("entity_id"))
+        if eid is None:
+            continue
+        sensor_by_entity.setdefault(int(eid), []).append(row)
+    consumable_by_entity: Dict[int, List[Dict[str, Any]]] = {}
+    for row in consumable_events:
+        eid = _safe_int(row.get("entity_id"))
+        if eid is None:
+            continue
+        consumable_by_entity.setdefault(int(eid), []).append(row)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
     squadron_tracks = _extract_squadron_tracks(canonical)
     kill_feed = _extract_kill_feed(canonical)
 
     _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+    _draw_sensor_overlay(img, draw, sensor_events, render_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect, spot_timeout=spot_timeout)
     _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadrons(img, draw, squadron_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadron_legend(img, squadron_tracks, canvas_size, margin, map_rect=map_rect)
@@ -4643,6 +4840,18 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             _ship_name(track.get("ship_id")) or track.get("player_name"),
             size=8,
             sunk=sunk,
+            consumable_kind=(
+                _active_sensor_kind(
+                    sensor_by_entity,
+                    _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
+                    battle_end,
+                )
+                or _active_consumable_kind(
+                    consumable_by_entity,
+                    _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
+                    battle_end,
+                )
+            ),
         )
         if health is not None:
             _draw_hp_bar(draw, ex, ey + 13, 28, 5, float(health.get("ratio", 0.0)), color, sunk=sunk or (not bool(health.get("alive", True))))
@@ -4669,6 +4878,91 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
     _draw_kill_feed_panel(img, draw, canonical, render_tracks, kill_feed, battle_end, frame_layout)
     _draw_lineup_panel(img, draw, frame_layout, current_t=battle_end, death_times=death_times)
     return img
+
+
+def _draw_sensor_overlay(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    sensors: List[Dict[str, Any]],
+    render_tracks: Dict[str, Dict[str, Any]],
+    t: float,
+    half: float,
+    canvas_size: int,
+    margin: int,
+    world_bounds: Tuple[float, float, float, float] | None = None,
+    map_rect: Tuple[int, int, int, int] | None = None,
+    spot_timeout: float = 6.0,
+) -> None:
+    if not sensors:
+        return
+    if world_bounds is None:
+        world_span = 2.0 * half
+    else:
+        world_span = max(float(world_bounds[1]) - float(world_bounds[0]), float(world_bounds[3]) - float(world_bounds[2]))
+    if map_rect is None:
+        usable_span = canvas_size - 2 * margin
+    else:
+        usable_span = min(int(map_rect[2]) - int(map_rect[0]), int(map_rect[3]) - int(map_rect[1]))
+
+    track_by_id: Dict[int, Dict[str, Any]] = {}
+    for key, track in render_tracks.items():
+        if not isinstance(track, dict):
+            continue
+        eid = _safe_int(track.get("entity_id"))
+        if eid is None:
+            eid = _safe_int(key)
+        if eid is None:
+            continue
+        track_by_id[int(eid)] = track
+
+    draw_rgba = ImageDraw.Draw(img, "RGBA")
+    for sensor in sensors:
+        start_time = float(sensor.get("start_time", 0.0))
+        end_time = float(sensor.get("end_time", 0.0))
+        if t < start_time or t > end_time:
+            continue
+        entity_id = _safe_int(sensor.get("entity_id"))
+        if entity_id is None:
+            continue
+        track = track_by_id.get(int(entity_id))
+        if not track:
+            continue
+        side = str(track.get("team_side") or "unknown")
+        points = list(track.get("points", []) or [])
+        if not points:
+            continue
+        times = [float(p.get("t", 0.0)) for p in points]
+        idx = bisect_right(times, t) - 1
+        if idx < 0:
+            continue
+        last_t = times[idx]
+        spotted = (t - last_t) <= spot_timeout and not bool(track.get("always_unspotted", False))
+        if side == "enemy" and not spotted:
+            continue
+        state = _ship_state_at(track, t)
+        if state is None:
+            continue
+        x = float(state.get("x", 0.0))
+        z = float(state.get("z", 0.0))
+        radius_world = float(sensor.get("radius", 0.0))
+        if radius_world <= 0.0:
+            continue
+        px, py = _to_px(x, z, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        radius_px = max(6, int(radius_world / max(1e-6, world_span) * usable_span * 0.92))
+
+        base = COLOR_FRIENDLY if side == "friendly" else COLOR_ENEMY if side == "enemy" else (210, 210, 210)
+        kind = str(sensor.get("kind") or "").lower()
+        if kind == "radar":
+            outline_alpha = 150
+            fill_alpha = 24
+            width = 2
+        else:
+            outline_alpha = 110
+            fill_alpha = 16
+            width = 1
+        outline = (base[0], base[1], base[2], outline_alpha)
+        fill = (base[0], base[1], base[2], fill_alpha)
+        draw_rgba.ellipse([px - radius_px, py - radius_px, px + radius_px, py + radius_px], fill=fill, outline=outline, width=width)
 
 
 def _draw_smoke_overlay(
@@ -4776,6 +5070,20 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
     spot_timeout = max(6.0, step * 1.5)
     capture_timeline = _capture_timeline(canonical)
     smoke_timeline = _smoke_timeline(canonical)
+    sensor_events = _extract_sensor_events(canonical)
+    consumable_events = _extract_consumable_events(canonical)
+    sensor_by_entity: Dict[int, List[Dict[str, Any]]] = {}
+    for row in sensor_events:
+        eid = _safe_int(row.get("entity_id"))
+        if eid is None:
+            continue
+        sensor_by_entity.setdefault(int(eid), []).append(row)
+    consumable_by_entity: Dict[int, List[Dict[str, Any]]] = {}
+    for row in consumable_events:
+        eid = _safe_int(row.get("entity_id"))
+        if eid is None:
+            continue
+        consumable_by_entity.setdefault(int(eid), []).append(row)
     artillery_traces = _extract_artillery_traces(canonical)
     torpedo_tracks = _extract_torpedo_tracks(canonical)
     squadron_tracks = _extract_squadron_tracks(canonical)
@@ -4798,6 +5106,7 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         smoke_snapshot = _smoke_snapshot_at(smoke_timeline, t)
         _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
+        _draw_sensor_overlay(img, draw, sensor_events, render_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect, spot_timeout=spot_timeout)
         _draw_artillery_traces(img, artillery_traces, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_torpedoes(draw, torpedo_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_squadrons(img, draw, squadron_tracks, t, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
@@ -4865,6 +5174,10 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 _ship_name(track.get("ship_id")) or track.get("player_name"),
                 size=marker_size,
                 sunk=sunk,
+                consumable_kind=(
+                    _active_sensor_kind(sensor_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t)
+                    or _active_consumable_kind(consumable_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t)
+                ),
             )
             if health is not None:
                 _draw_hp_bar(
@@ -4897,4 +5210,5 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
 
 def render_gif_frames(canonical: Dict[str, Any], canvas_size: int = 600, speed: float = 3.0, show_grid: bool = True) -> List[Image.Image]:
     return list(iter_animation_frames(canonical, canvas_size=canvas_size, speed=speed, show_grid=show_grid))
+_CONSUMABLE_ICON_CACHE: Dict[Tuple[str, int], Image.Image] = {}
 _AIRCRAFT_PARAMS_DEBUG: Dict[str, Dict[str, Any]] = {}

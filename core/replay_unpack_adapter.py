@@ -4,6 +4,11 @@ import sys
 import math
 import os
 import json
+import builtins
+import pickle
+import pickletools
+import re
+import statistics
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
@@ -92,6 +97,11 @@ class ReplayDecodeError(RuntimeError):
     pass
 
 
+_CONSUMABLE_PARAMS_CACHE: Optional[Dict[str, Any]] = None
+_SHIPS_CACHE: Optional[Dict[str, Any]] = None
+_MIN_CONSUMABLE_SCORE = 5
+
+
 def read_replay(path: str) -> ReplayContext:
     reader = ReplayReader(path)
     replay = reader.get_replay_data()
@@ -168,6 +178,457 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_blob(value: Any) -> Optional[bytes]:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    if isinstance(value, BytesIO):
+        return value.getvalue()
+    return None
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    _ALLOWED = {
+        "dict",
+        "list",
+        "tuple",
+        "set",
+        "frozenset",
+        "str",
+        "bytes",
+        "bytearray",
+        "int",
+        "float",
+        "bool",
+        "NoneType",
+    }
+
+    def find_class(self, module: str, name: str) -> Any:
+        if module == "builtins" and name in self._ALLOWED:
+            return getattr(builtins, name)
+        raise pickle.UnpicklingError(f"global '{module}.{name}' is forbidden")
+
+
+def _safe_unpickle(value: Any) -> Any:
+    data = _coerce_blob(value)
+    if data is None:
+        return None
+    try:
+        return _RestrictedUnpickler(BytesIO(data)).load()
+    except Exception:
+        return None
+
+
+def _collect_text_tokens(value: Any, out: set[str]) -> None:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            out.add(str(k).lower())
+            if isinstance(v, (str, bytes)):
+                out.add(str(v).lower())
+            else:
+                _collect_text_tokens(v, out)
+    elif isinstance(value, (list, tuple, set)):
+        for v in value:
+            _collect_text_tokens(v, out)
+
+def _infer_consumable_kind_from_tokens(tokens: set[str]) -> Optional[str]:
+    if any("radar" in t for t in tokens):
+        return "radar"
+    if any(token in t for t in tokens for token in ("hydro", "hydroacoustic", "acoustic", "sonar")):
+        return "hydro"
+    if any("smoke" in t for t in tokens):
+        return "smoke"
+    if any(token in t for t in tokens for token in ("speed", "boost", "engine", "speedbooster")):
+        return "engine"
+    if any(token in t for t in tokens for token in ("regen", "repair", "heal", "recover")):
+        return "heal"
+    return None
+
+
+def _infer_consumable_kind(value: Any) -> Optional[str]:
+    tokens: set[str] = set()
+    _collect_text_tokens(value, tokens)
+    return _infer_consumable_kind_from_tokens(tokens)
+
+
+def _collect_range_candidates(value: Any, out: List[float]) -> None:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            key = str(k).lower()
+            if isinstance(v, (int, float)) and any(token in key for token in ("range", "radius", "distance", "dist", "detect", "spot", "search")):
+                out.append(float(v))
+            else:
+                _collect_range_candidates(v, out)
+    elif isinstance(value, (list, tuple, set)):
+        for v in value:
+            _collect_range_candidates(v, out)
+
+
+def _coerce_range_m(value: float) -> Optional[float]:
+    if value <= 0.0:
+        return None
+    if value <= 60.0:
+        value = value * 1000.0
+    if value < 500.0 or value > 30000.0:
+        return None
+    return float(value)
+
+
+def _infer_range_m(value: Any) -> Optional[float]:
+    candidates: List[float] = []
+    _collect_range_candidates(value, candidates)
+    if not candidates:
+        return None
+    meters = [_coerce_range_m(v) for v in candidates]
+    meters = [v for v in meters if v is not None]
+    if not meters:
+        return None
+    return float(max(meters))
+
+
+def _infer_range_from_numbers(numbers: List[float]) -> Optional[float]:
+    if not numbers:
+        return None
+    meters: List[float] = []
+    for num in numbers:
+        if not isinstance(num, (int, float)):
+            continue
+        val = float(num)
+        if val <= 0.0:
+            continue
+        maybe = _coerce_range_m(val)
+        if maybe is not None:
+            meters.append(maybe)
+    if not meters:
+        return None
+    # Prefer typical radar/hydro ranges.
+    plausible = [v for v in meters if 4000.0 <= v <= 14000.0]
+    if plausible:
+        return float(max(plausible))
+    return float(max(meters))
+
+
+def _scan_pickled_blob(value: Any) -> tuple[set[str], List[float]]:
+    data = _coerce_blob(value)
+    if data is None:
+        return set(), []
+    tokens: set[str] = set()
+    numbers: List[float] = []
+    try:
+        for op, arg, _pos in pickletools.genops(data):
+            name = op.name
+            if name in ("SHORT_BINUNICODE", "BINUNICODE", "UNICODE", "BINSTRING", "SHORT_BINSTRING", "STRING"):
+                if isinstance(arg, bytes):
+                    try:
+                        s = arg.decode("utf-8", errors="ignore")
+                    except Exception:
+                        s = ""
+                else:
+                    s = str(arg or "")
+                if s:
+                    tokens.add(s.lower())
+            elif name in ("BININT", "BININT1", "BININT2", "LONG", "LONG1", "LONG4", "BINFLOAT"):
+                try:
+                    numbers.append(float(arg))
+                except Exception:
+                    continue
+    except Exception:
+        return set(), []
+    return tokens, numbers
+
+
+def _collect_duration_candidates(value: Any, out: List[float]) -> None:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            key = str(k).lower()
+            if isinstance(v, (int, float)) and any(token in key for token in ("worktime", "duration", "lifetime", "timeleft", "active")):
+                out.append(float(v))
+            else:
+                _collect_duration_candidates(v, out)
+    elif isinstance(value, (list, tuple, set)):
+        for v in value:
+            _collect_duration_candidates(v, out)
+
+
+def _infer_duration_s(value: Any) -> Optional[float]:
+    candidates: List[float] = []
+    _collect_duration_candidates(value, candidates)
+    if not candidates:
+        return None
+    candidates = [v for v in candidates if v > 0.0]
+    if not candidates:
+        return None
+    plausible = [v for v in candidates if 5.0 <= v <= 240.0]
+    if plausible:
+        return float(max(plausible))
+    return float(max(candidates))
+
+
+def _safe_median(values: List[float]) -> Optional[float]:
+    vals = [v for v in values if isinstance(v, (int, float))]
+    if not vals:
+        return None
+    try:
+        return float(statistics.median(vals))
+    except Exception:
+        return float(vals[len(vals) // 2])
+
+
+def _load_gameparams_consumables() -> Dict[str, Any]:
+    global _CONSUMABLE_PARAMS_CACHE
+    if _CONSUMABLE_PARAMS_CACHE is not None:
+        return _CONSUMABLE_PARAMS_CACHE
+    root = Path(__file__).resolve().parent.parent
+    path = root / "content" / "gameparams_consumables.json"
+    if not path.exists():
+        _CONSUMABLE_PARAMS_CACHE = {}
+        return _CONSUMABLE_PARAMS_CACHE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        _CONSUMABLE_PARAMS_CACHE = {}
+        return _CONSUMABLE_PARAMS_CACHE
+
+    matches = data.get("matches", []) if isinstance(data, dict) else []
+    radar_variants: List[Dict[str, Any]] = []
+    sonar_variants: List[Dict[str, Any]] = []
+
+    def _parse_variant_key(key: str) -> Dict[str, Any]:
+        tokens = [t for t in key.split("_") if t]
+        info: Dict[str, Any] = {}
+        if not tokens:
+            return info
+        class_codes = {"DD", "CL", "CA", "BB", "CV", "SS"}
+        head = tokens[0]
+        head_upper = head.upper()
+        # Pattern: NATION_TIER (e.g., Deutsche_11)
+        if len(tokens) == 2 and tokens[1].isdigit():
+            info["nation_code"] = head_upper
+            info["tier_min"] = int(tokens[1])
+            info["tier_max"] = int(tokens[1])
+            return info
+        # Pattern: NATIONCLASS_TIER_... (e.g., UKDD_6_10_Jupiter_Test)
+        for cls in class_codes:
+            if head_upper.endswith(cls):
+                nation_code = head_upper[: -len(cls)]
+                if nation_code:
+                    info["nation_code"] = nation_code
+                info["class_code"] = cls
+        if len(tokens) > 1 and tokens[1].isdigit():
+            info["tier_min"] = int(tokens[1])
+            info["tier_max"] = int(tokens[1])
+        return info
+        # Pattern: NATION_TIER_CLASS_... (e.g., US_8_CL_CLEV)
+        if len(tokens) >= 3 and tokens[1].isdigit():
+            info["nation_code"] = head_upper
+            info["tier_min"] = int(tokens[1])
+            info["tier_max"] = int(tokens[1])
+            if tokens[2].upper() in class_codes:
+                info["class_code"] = tokens[2].upper()
+            return info
+        # Pattern: NATION_CLASS_TIER_... (e.g., USSR_CA_8_10)
+        if len(tokens) >= 3 and tokens[1].upper() in class_codes and tokens[2].isdigit():
+            info["nation_code"] = head_upper
+            info["class_code"] = tokens[1].upper()
+            info["tier_min"] = int(tokens[2])
+            info["tier_max"] = int(tokens[2])
+            if len(tokens) >= 4 and tokens[3].isdigit():
+                info["tier_max"] = int(tokens[3])
+            return info
+        # Fallback: at least capture nation code when obvious.
+        info["nation_code"] = head_upper
+        return info
+
+    for entry in matches:
+        if not isinstance(entry, dict):
+            continue
+        path_str = str(entry.get("path") or "")
+        # Skip non-standard variants.
+        if "/PXY" in path_str or "ModernEra" in path_str:
+            continue
+        if path_str not in ("/PCY016_SonarSearchPremium", "/PCY020_RLSSearchPremium"):
+            continue
+        payload = entry.get("data")
+        if not isinstance(payload, dict):
+            continue
+        for key, val in payload.items():
+            if key in ("canBuy", "typeinfo", "costCR", "freeOfCharge", "id", "index"):
+                continue
+            if not isinstance(val, dict):
+                continue
+            consumable_type = str(val.get("consumableType") or "").lower()
+            if consumable_type not in ("rls", "sonar"):
+                continue
+            logic = val.get("logic", {}) if isinstance(val.get("logic"), dict) else {}
+            dist_ship = _safe_float(logic.get("distShip"), None)
+            dist_torp = _safe_float(logic.get("distTorpedo"), None)
+            work_time = _safe_float(val.get("workTime"), None)
+            reload_time = _safe_float(val.get("reloadTime"), None)
+            variant = {
+                "key": key,
+                "consumable_type": consumable_type,
+                "dist_ship": dist_ship,
+                "dist_torp": dist_torp,
+                "work_time": work_time,
+                "reload_time": reload_time,
+                # Range is stored in the same world units as replay coordinates (1 unit ≈ 30m).
+                "range_m": float(dist_ship) if dist_ship is not None else None,
+                "torp_range_m": float(dist_torp) if dist_torp is not None else None,
+            }
+            variant.update(_parse_variant_key(key))
+            if consumable_type == "rls":
+                radar_variants.append(variant)
+            else:
+                sonar_variants.append(variant)
+
+    radar_ranges = [v["range_m"] for v in radar_variants if v.get("range_m")]
+    radar_durations = [v["work_time"] for v in radar_variants if v.get("work_time")]
+    sonar_ranges = [v["range_m"] for v in sonar_variants if v.get("range_m")]
+    sonar_durations = [v["work_time"] for v in sonar_variants if v.get("work_time")]
+
+    _CONSUMABLE_PARAMS_CACHE = {
+        "radar_variants": radar_variants,
+        "sonar_variants": sonar_variants,
+        "radar_default_range_m": _safe_median(radar_ranges),
+        "radar_default_duration_s": _safe_median(radar_durations),
+        "sonar_default_range_m": _safe_median(sonar_ranges),
+        "sonar_default_duration_s": _safe_median(sonar_durations),
+    }
+    return _CONSUMABLE_PARAMS_CACHE
+
+
+def _load_ships_cache() -> Dict[str, Any]:
+    global _SHIPS_CACHE
+    if _SHIPS_CACHE is not None:
+        return _SHIPS_CACHE
+    path = Path(__file__).resolve().parent.parent / "ships_cache.json"
+    if not path.exists():
+        _SHIPS_CACHE = {}
+        return _SHIPS_CACHE
+    try:
+        _SHIPS_CACHE = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        _SHIPS_CACHE = {}
+    return _SHIPS_CACHE
+
+
+def _normalize_ship_name(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(name).upper())
+
+
+def _score_consumable_variant(variant: Dict[str, Any], ship_info: Dict[str, Any]) -> int:
+    score = 0
+    nation = str(ship_info.get("nation") or "").lower()
+    tier = _safe_int(ship_info.get("tier"))
+    ship_type = str(ship_info.get("type") or "")
+    ship_name = _normalize_ship_name(ship_info.get("name") or "")
+    variant_key = _normalize_ship_name(variant.get("key") or "")
+
+    nation_codes = {
+        "usa": {"US"},
+        "ussr": {"USSR"},
+        "uk": {"GB", "UK"},
+        "germany": {"DE", "GER", "KM", "DEUTSCHE"},
+        "japan": {"JP", "IJN"},
+        "france": {"FR"},
+        "italy": {"IT"},
+        "europe": {"EU"},
+        "pan_asia": {"PAZ"},
+        "pan_america": {"PAM"},
+        "common": set(),
+    }
+    v_nation = str(variant.get("nation_code") or "").upper()
+    if nation in nation_codes and v_nation in nation_codes[nation]:
+        score += 2
+    tier_min = variant.get("tier_min")
+    tier_max = variant.get("tier_max")
+    if tier is not None and tier_min is not None and tier_max is not None:
+        try:
+            if int(tier_min) <= int(tier) <= int(tier_max):
+                score += 2
+        except Exception:
+            pass
+    class_code = str(variant.get("class_code") or "").upper()
+    if ship_type == "Cruiser" and class_code in {"CL", "CA"}:
+        score += 1
+    elif ship_type == "Destroyer" and class_code == "DD":
+        score += 1
+    elif ship_type == "Battleship" and class_code == "BB":
+        score += 1
+    elif ship_type == "AirCarrier" and class_code == "CV":
+        score += 1
+    elif ship_type == "Submarine" and class_code == "SS":
+        score += 1
+    if ship_name and ship_name in variant_key:
+        # Exact ship-name match should dominate.
+        if ship_name == variant_key:
+            score += 6
+        else:
+            score += 4
+    else:
+        # Try short token match (first 4 letters of each word)
+        parts = re.findall(r"[A-Z0-9]+", str(ship_info.get("name") or "").upper())
+        for part in parts:
+            if len(part) >= 4 and part[:4] in variant_key:
+                score += 2
+                break
+    return score
+
+
+def _choose_consumable_variant(kind: str, ship_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    cache = _load_gameparams_consumables()
+    if not cache:
+        return None
+    variants = cache.get("radar_variants") if kind == "radar" else cache.get("sonar_variants")
+    if not variants:
+        return None
+    best = None
+    best_score = -1
+    for variant in variants:
+        score = _score_consumable_variant(variant, ship_info)
+        if score > best_score:
+            best = variant
+            best_score = score
+    if not best:
+        return None
+    # Allow slightly lower score when the variant only encodes nation+tier (no class/name).
+    min_score = _MIN_CONSUMABLE_SCORE
+    if not best.get("class_code") and not best.get("key", "").upper().startswith("STAR"):
+        if best.get("tier_min") is not None and best.get("nation_code"):
+            min_score = min(min_score, 4)
+    if best_score < min_score:
+        return None
+    return best
+
+
+def _fallback_consumable_params(kind: str, ship_info: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    # No defaults: only use ship-specific data from GameParams.
+    return {"range_m": None, "duration_s": None, "reload_s": None}
+
+
+
+def _collect_consumable_type(value: Any) -> Optional[int]:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            key = str(k).lower()
+            if isinstance(v, (int, float)) and ("consumable" in key and ("type" in key or "id" in key)):
+                return int(v)
+            nested = _collect_consumable_type(v)
+            if nested is not None:
+                return nested
+    elif isinstance(value, (list, tuple, set)):
+        for v in value:
+            nested = _collect_consumable_type(v)
+            if nested is not None:
+                return nested
+    return None
 
 
 def _iter_values(value: Any) -> List[Any]:
@@ -747,6 +1208,7 @@ def _extract_battle_overlay(
     context: ReplayContext,
     packets: List[DecodedPacket],
     local_team_id: Optional[int],
+    session_map: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     replay_player = WowsReplayPlayer(context.version)
     cap_positions: Dict[int, Dict[str, Any]] = {}
@@ -770,8 +1232,45 @@ def _extract_battle_overlay(
     torpedo_points: List[Dict[str, Any]] = []
     squadron_events: List[Dict[str, Any]] = []
     chat_messages: List[Dict[str, Any]] = []
+    sensor_events: List[Dict[str, Any]] = []
+    consumable_events: List[Dict[str, Any]] = []
+    consumable_defs_by_entity: Dict[int, Dict[str, Dict[Any, float]]] = {}
+    sensor_debug_enabled = bool(os.getenv("RENDER_SENSOR_DEBUG"))
+    sensor_debug_limit = max(1, _safe_int(os.getenv("RENDER_SENSOR_DEBUG_LIMIT")) or 60)
+    sensor_debug_set = bool(os.getenv("RENDER_SENSOR_DEBUG_SET"))
+    sensor_debug: List[Dict[str, Any]] = []
     torpedo_params_by_owner: Dict[int, set[int]] = {}
     vehicle_kills: List[Dict[str, Any]] = []
+
+    ship_info_by_entity: Dict[int, Dict[str, Any]] = {}
+    ships_cache = _load_ships_cache()
+    if session_map:
+        for eid, entry in session_map.items():
+            ship_id = _safe_int(entry.get("shipId"))
+            if ship_id is None:
+                continue
+            ship = ships_cache.get(str(ship_id)) if ships_cache else None
+            if not ship and ships_cache:
+                ship = ships_cache.get(ship_id)
+            if not ship:
+                continue
+            has_sonar = False
+            modules = ship.get("modules", {}) if isinstance(ship, dict) else {}
+            sonar = modules.get("sonar") if isinstance(modules, dict) else None
+            if isinstance(sonar, dict):
+                if sonar.get("id"):
+                    has_sonar = True
+                ids = sonar.get("ids")
+                if isinstance(ids, list) and any(ids):
+                    has_sonar = True
+            ship_info_by_entity[int(eid)] = {
+                "ship_id": ship_id,
+                "name": ship.get("name"),
+                "nation": ship.get("nation"),
+                "tier": ship.get("tier"),
+                "type": ship.get("type"),
+                "has_sonar": has_sonar,
+            }
     avatar_kills: List[Dict[str, Any]] = []
     seen_shots: set[tuple[int, int]] = set()
     seen_torp_points: set[tuple[int, int, float, float, float]] = set()
@@ -959,6 +1458,384 @@ def _extract_battle_overlay(
                 pid = _safe_int(row.get(key))
                 if pid is not None and pid >= 0:
                     player_name_by_id[pid] = name
+
+    def _record_consumable_def(entity_id: int, kind: str, range_m: float, consumable_type: Optional[int]) -> None:
+        entry = consumable_defs_by_entity.setdefault(int(entity_id), {"by_kind": {}, "by_type": {}, "entries": []})
+        if kind:
+            prev = entry["by_kind"].get(kind)
+            if prev is None or range_m > prev:
+                entry["by_kind"][kind] = float(range_m)
+        if consumable_type is not None:
+            prev = entry["by_type"].get(consumable_type)
+            if prev is None or range_m > prev:
+                entry["by_type"][consumable_type] = float(range_m)
+
+    def _ship_info(entity_id: int) -> Dict[str, Any]:
+        return ship_info_by_entity.get(int(entity_id), {})
+
+    def _collect_consumable_entries(value: Any, out: List[Dict[str, Any]]) -> None:
+        if isinstance(value, dict):
+            work_time = _safe_float(value.get("workTime"), None)
+            reload_time = _safe_float(value.get("reloadTime"), None)
+            if work_time is not None:
+                kind = _infer_consumable_kind(value) or ""
+                ctype = _collect_consumable_type(value)
+                tokens: set[str] = set()
+                _collect_text_tokens(value, tokens)
+                id_tokens: set[str] = set()
+                for key in ("titleIDs", "descIDs", "iconIDs", "gameParamsName", "game_params_name"):
+                    raw = value.get(key)
+                    if isinstance(raw, str) and raw.strip():
+                        id_tokens.add(raw.strip().lower())
+                out.append(
+                    {
+                        "kind": kind,
+                        "work_time": float(work_time),
+                        "reload_time": float(reload_time or 0.0),
+                        "consumable_type": int(ctype) if ctype is not None else -1,
+                        "tokens": sorted(list(tokens))[:16],
+                        "ids": sorted(list(id_tokens))[:8],
+                    }
+                )
+            for v in value.values():
+                _collect_consumable_entries(v, out)
+        elif isinstance(value, (list, tuple, set)):
+            for v in value:
+                _collect_consumable_entries(v, out)
+
+    def _merge_consumable_entries(entity_id: int, entries: List[Dict[str, Any]]) -> None:
+        if not entries:
+            return
+        bucket = consumable_defs_by_entity.setdefault(int(entity_id), {"by_kind": {}, "by_type": {}, "entries": []})
+        existing = bucket.get("entries", [])
+        for entry in entries:
+            key = (
+                entry.get("kind", ""),
+                round(float(entry.get("work_time", 0.0)), 2),
+                round(float(entry.get("reload_time", 0.0)), 2),
+                int(entry.get("consumable_type", -1)),
+            )
+            if any(
+                (
+                    e.get("kind", ""),
+                    round(float(e.get("work_time", 0.0)), 2),
+                    round(float(e.get("reload_time", 0.0)), 2),
+                    int(e.get("consumable_type", -1)),
+                )
+                == key
+                for e in existing
+            ):
+                continue
+            existing.append(entry)
+        bucket["entries"] = existing
+
+    def _match_consumable_entry(entity_id: int, duration: float, usage_tokens: Optional[set[str]] = None) -> tuple[Optional[Dict[str, Any]], bool]:
+        if duration <= 0.0:
+            return None, False
+        entries = consumable_defs_by_entity.get(int(entity_id), {}).get("entries", [])
+        if not entries:
+            return None, False
+        if usage_tokens:
+            # Prefer explicit ID/token matches when available.
+            for entry in entries:
+                ids = entry.get("ids", []) or []
+                if any(str(token).lower() in usage_tokens for token in ids):
+                    return entry, True
+        scored: List[tuple[float, Dict[str, Any]]] = []
+        for entry in entries:
+            wt = _safe_float(entry.get("work_time"), None)
+            if wt is None or wt <= 0.0:
+                continue
+            diff = abs(float(duration) - float(wt))
+            scored.append((diff, entry))
+        if not scored:
+            return None, False
+        scored.sort(key=lambda item: item[0])
+        best_diff, best = scored[0]
+        wt = float(best.get("work_time", 0.0) or 0.0)
+        tolerance = max(1.0, wt * 0.12)
+        if best_diff > tolerance:
+            return None, False
+        # If other candidates are similarly close but a different kind, treat as ambiguous.
+        close = [entry for diff, entry in scored if diff <= tolerance]
+        kinds = {str(e.get("kind") or "") for e in close}
+        sensor_kinds = {k for k in kinds if k in ("radar", "hydro")}
+        has_other = any(k not in ("radar", "hydro") for k in kinds)
+        if sensor_kinds and has_other:
+            return None, False
+        if len(sensor_kinds) > 1:
+            return None, False
+        return best, False
+
+    def _has_non_sensor_match(entity_id: int, duration: float) -> bool:
+        if duration <= 0.0:
+            return False
+        entries = consumable_defs_by_entity.get(int(entity_id), {}).get("entries", [])
+        for entry in entries:
+            kind = str(entry.get("kind") or "")
+            if kind in ("radar", "hydro"):
+                continue
+            wt = _safe_float(entry.get("work_time"), None)
+            if wt is None or wt <= 0.0:
+                continue
+            tolerance = max(1.0, float(wt) * 0.12)
+            if abs(float(duration) - float(wt)) <= tolerance:
+                return True
+        return False
+
+    def _lookup_consumable_params(kind: str, entity_id: int) -> Dict[str, Optional[float]]:
+        info = _ship_info(entity_id)
+        variant = _choose_consumable_variant(kind, info) if info else None
+        if variant:
+            return {
+                "range_m": variant.get("range_m"),
+                "duration_s": variant.get("work_time"),
+                "reload_s": variant.get("reload_time"),
+            }
+        return _fallback_consumable_params(kind, info)
+
+    def _scan_consumable_defs(obj: Any, entity_id: int) -> None:
+        if isinstance(obj, dict):
+            kind = _infer_consumable_kind(obj)
+            range_m = _infer_range_m(obj)
+            if kind and range_m is not None:
+                ctype = _collect_consumable_type(obj)
+                _record_consumable_def(entity_id, kind, range_m, ctype)
+            for v in obj.values():
+                _scan_consumable_defs(v, entity_id)
+        elif isinstance(obj, (list, tuple, set)):
+            for v in obj:
+                _scan_consumable_defs(v, entity_id)
+
+    def _on_set_consumables(entity: Any, *args: Any, **_kwargs: Any) -> None:
+        if not args:
+            return
+        entity_id = _safe_int(getattr(entity, "id", None))
+        if entity_id is None:
+            return
+        raw = args[0]
+        data = _safe_unpickle(raw)
+        if data is None and isinstance(raw, dict):
+            data = raw
+        if data is not None:
+            _scan_consumable_defs(data, int(entity_id))
+            entries: List[Dict[str, Any]] = []
+            _collect_consumable_entries(data, entries)
+            _merge_consumable_entries(int(entity_id), entries)
+            if sensor_debug_enabled and sensor_debug_set and len(sensor_debug) < sensor_debug_limit:
+                tokens: set[str] = set()
+                _collect_text_tokens(data, tokens)
+                sensor_debug.append(
+                    {
+                        "time_s": round(float(packet_time_ref[0]), 3),
+                        "event": "setConsumables",
+                        "entity_id": int(entity_id),
+                        "raw_type": type(raw).__name__,
+                        "tokens_sample": sorted(list(tokens))[:24],
+                    }
+                )
+            return
+        tokens, numbers = _scan_pickled_blob(raw)
+        kind = _infer_consumable_kind_from_tokens(tokens) if tokens else None
+        range_m = _infer_range_from_numbers(numbers) if numbers else None
+        if kind and range_m is not None:
+            _record_consumable_def(int(entity_id), kind, float(range_m), None)
+        if sensor_debug_enabled and sensor_debug_set and len(sensor_debug) < sensor_debug_limit:
+            sensor_debug.append(
+                {
+                    "time_s": round(float(packet_time_ref[0]), 3),
+                    "event": "setConsumables",
+                    "entity_id": int(entity_id),
+                    "raw_type": type(raw).__name__,
+                    "tokens_sample": sorted(list(tokens))[:24],
+                    "range_candidates": [round(float(v), 3) for v in numbers[:8]],
+                    "kind": kind or "",
+                    "range_m": round(float(range_m), 3) if range_m is not None else None,
+                }
+            )
+
+    def _on_consumable_used(entity: Any, *args: Any, **kwargs: Any) -> None:
+        entity_id = _safe_int(getattr(entity, "id", None))
+        if entity_id is None:
+            return
+        usage_raw = None
+        if args:
+            usage_raw = args[0]
+        elif "consumableUsageParams" in kwargs:
+            usage_raw = kwargs.get("consumableUsageParams")
+        usage = usage_raw if isinstance(usage_raw, dict) else _safe_unpickle(usage_raw)
+        kind = _infer_consumable_kind(usage) if usage is not None else None
+        consumable_type = _collect_consumable_type(usage) if usage is not None else None
+        ship_info = _ship_info(entity_id)
+        usage_tokens: set[str] = set()
+        if usage is not None:
+            _collect_text_tokens(usage, usage_tokens)
+        range_m = _infer_range_m(usage) if usage is not None else None
+        if range_m is None:
+            defs = consumable_defs_by_entity.get(int(entity_id), {})
+            if consumable_type is not None:
+                range_m = defs.get("by_type", {}).get(consumable_type)
+            if range_m is None and kind:
+                range_m = defs.get("by_kind", {}).get(kind)
+        if usage is None and isinstance(usage_raw, (bytes, bytearray, memoryview, BytesIO)):
+            tokens, numbers = _scan_pickled_blob(usage_raw)
+            if kind is None and tokens:
+                kind = _infer_consumable_kind_from_tokens(tokens)
+            if range_m is None and numbers:
+                range_m = _infer_range_from_numbers(numbers)
+            if tokens:
+                usage_tokens.update(tokens)
+        radar_variant = _choose_consumable_variant("radar", ship_info) if ship_info else None
+        sonar_variant = _choose_consumable_variant("hydro", ship_info) if ship_info else None
+        chosen_variant = None
+        if kind is None:
+            defs = consumable_defs_by_entity.get(int(entity_id), {})
+            kinds = list(defs.get("by_kind", {}).keys())
+            if len(kinds) == 1:
+                kind = kinds[0]
+            elif radar_variant and not sonar_variant:
+                kind = "radar"
+                chosen_variant = radar_variant
+            elif sonar_variant and not radar_variant:
+                kind = "hydro"
+                chosen_variant = sonar_variant
+        duration_s = 0.0
+        if len(args) > 1:
+            duration_s = _safe_float(args[1], 0.0)
+        elif "workTimeLeft" in kwargs:
+            duration_s = _safe_float(kwargs.get("workTimeLeft"), 0.0)
+        if duration_s <= 0.0 and usage is not None:
+            inferred = _infer_duration_s(usage)
+            if inferred is not None:
+                duration_s = inferred
+        entry_match, entry_id_match = _match_consumable_entry(int(entity_id), float(duration_s), usage_tokens=usage_tokens if usage_tokens else None)
+        if entry_match:
+            entry_kind = str(entry_match.get("kind") or "")
+            if entry_kind in ("radar", "hydro"):
+                kind = entry_kind
+                chosen_variant = _choose_consumable_variant(kind, ship_info) if ship_info else None
+            elif entry_kind:
+                kind = entry_kind
+        elif kind is None and duration_s > 0.0 and _has_non_sensor_match(int(entity_id), float(duration_s)):
+            return
+        elif kind is None and radar_variant and sonar_variant and duration_s > 0.0:
+            radar_time = radar_variant.get("work_time") or 0.0
+            sonar_time = sonar_variant.get("work_time") or 0.0
+            if radar_time > 0.0 or sonar_time > 0.0:
+                radar_diff = abs(float(duration_s) - float(radar_time)) if radar_time else float("inf")
+                sonar_diff = abs(float(duration_s) - float(sonar_time)) if sonar_time else float("inf")
+                if radar_diff != sonar_diff:
+                    if radar_diff < sonar_diff:
+                        kind = "radar"
+                        chosen_variant = radar_variant
+                    else:
+                        kind = "hydro"
+                        chosen_variant = sonar_variant
+        if chosen_variant:
+            if range_m is None and chosen_variant.get("range_m") is not None:
+                range_m = float(chosen_variant["range_m"])
+            if duration_s <= 0.0 and chosen_variant.get("work_time") is not None:
+                duration_s = float(chosen_variant["work_time"])
+        low_confidence = (
+            usage is None
+            and not usage_tokens
+            and consumable_type is None
+            and range_m is None
+            and not entry_match
+        )
+        low_confidence_reason = ""
+        if kind in ("radar", "hydro"):
+            if chosen_variant is None:
+                chosen_variant = _choose_consumable_variant(kind, ship_info) if ship_info else None
+            if range_m is None or duration_s <= 0.0:
+                params = _lookup_consumable_params(kind, int(entity_id))
+                if range_m is None and params.get("range_m") is not None:
+                    range_m = float(params["range_m"])
+                if duration_s <= 0.0 and params.get("duration_s") is not None:
+                    duration_s = float(params["duration_s"])
+            if chosen_variant:
+                variant_range = _safe_float(chosen_variant.get("range_m"), None)
+                variant_duration = _safe_float(chosen_variant.get("work_time"), None)
+                if variant_range is not None:
+                    range_m = float(variant_range)
+                if variant_duration is not None and variant_duration > 0.0:
+                    if duration_s <= 0.0:
+                        duration_s = float(variant_duration)
+                    else:
+                        # Only accept this consumable if duration roughly matches the variant.
+                        ratio = float(duration_s) / float(variant_duration)
+                        if ratio < 0.90 or ratio > 1.25:
+                            return
+                        if low_confidence:
+                            tight = abs(float(duration_s) - float(variant_duration)) <= max(0.5, float(variant_duration) * 0.05)
+                            if not tight:
+                                return
+                            low_confidence_reason = "duration_only"
+            if chosen_variant is None:
+                # No reliable match for this ship/consumable; skip rendering.
+                return
+        if kind in ("heal", "engine", "smoke"):
+            if duration_s <= 0.0:
+                return
+            start_t = round(float(packet_time_ref[0]), 3)
+            consumable_events.append(
+                {
+                    "entity_id": int(entity_id),
+                    "kind": str(kind),
+                    "start_time": start_t,
+                    "duration_s": round(float(duration_s), 3),
+                    "end_time": round(float(start_t + duration_s), 3),
+                }
+            )
+            return
+        if sensor_debug_enabled and len(sensor_debug) < sensor_debug_limit:
+            tokens: set[str] = set()
+            if usage is not None:
+                _collect_text_tokens(usage, tokens)
+            range_candidates: List[float] = []
+            if usage is not None:
+                _collect_range_candidates(usage, range_candidates)
+            sensor_debug.append(
+                {
+                    "time_s": round(float(packet_time_ref[0]), 3),
+                    "event": "consumableUsed",
+                    "entity_id": int(entity_id),
+                    "raw_type": type(usage_raw).__name__,
+                    "usage_type": type(usage).__name__ if usage is not None else "None",
+                    "kind": kind or "",
+                    "consumable_type": int(consumable_type) if consumable_type is not None else -1,
+                    "range_m": round(float(range_m), 3) if range_m is not None else None,
+                    "duration_s": round(float(duration_s), 3),
+                    "ship_name": str(ship_info.get("name") or ""),
+                    "variant_key": str(chosen_variant.get("key")) if chosen_variant else "",
+                    "entry_match": {
+                        "kind": entry_match.get("kind"),
+                        "work_time": entry_match.get("work_time"),
+                        "reload_time": entry_match.get("reload_time"),
+                        "id_match": entry_id_match,
+                    } if entry_match else {},
+                    "tokens_sample": sorted(list(tokens))[:24],
+                    "range_candidates": [round(float(v), 3) for v in range_candidates[:8]],
+                }
+            )
+        if kind not in ("radar", "hydro") or range_m is None:
+            return
+        if duration_s <= 0.0:
+            return
+        start_t = round(float(packet_time_ref[0]), 3)
+        sensor_events.append(
+            {
+                "entity_id": int(entity_id),
+                "kind": str(kind),
+                "radius": round(float(range_m), 3),
+                "start_time": start_t,
+                "duration_s": round(float(duration_s), 3),
+                "end_time": round(float(start_t + duration_s), 3),
+                "consumable_type": int(consumable_type) if consumable_type is not None else -1,
+                "confidence": "low" if low_confidence_reason else "normal",
+                "confidence_reason": low_confidence_reason,
+            }
+        )
 
     def _on_artillery_shots(_entity: Any, *args: Any, **_kwargs: Any) -> None:
         shot_packs = _iter_values(args[0]) if args else []
@@ -1236,6 +2113,9 @@ def _extract_battle_overlay(
     _subscribe_method("Account_onChatMessage", _on_chat_message)
     _subscribe_method("Vehicle_kill", _on_vehicle_kill)
     _subscribe_method("Avatar_receiveVehicleDeath", _on_avatar_vehicle_death)
+    _subscribe_method("Vehicle_setConsumables", _on_set_consumables)
+    _subscribe_method("Vehicle_onConsumableUsed", _on_consumable_used)
+    _subscribe_method("Avatar_useConsumable", _on_consumable_used)
     try:
         for p in packets:
             packet_time_ref[0] = float(p.time)
@@ -1360,6 +2240,14 @@ def _extract_battle_overlay(
             debug_path.parent.mkdir(parents=True, exist_ok=True)
             with debug_path.open("w", encoding="utf-8") as f:
                 json.dump(smoke_debug, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    if sensor_debug_enabled and sensor_debug:
+        try:
+            debug_path = Path(__file__).resolve().parent.parent / "content" / "sensor_debug.json"
+            debug_path.parent.mkdir(parents=True, exist_ok=True)
+            with debug_path.open("w", encoding="utf-8") as f:
+                json.dump(sensor_debug, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -1576,6 +2464,8 @@ def _extract_battle_overlay(
                 int(item.get("torpedo_id", -1)),
             ),
         ),
+        "sensor_events": sorted(sensor_events, key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1)), str(item.get("kind", "")))),
+        "consumable_events": sorted(consumable_events, key=lambda item: (float(item.get("start_time", 0.0)), int(item.get("entity_id", -1)), str(item.get("kind", "")))),
         "squadrons": sorted(
             squadron_events,
             key=lambda item: (
@@ -1829,7 +2719,7 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
         track.points.sort(key=lambda item: item.t)
         track.points = _sanitize_track(track.points)
 
-    battle_state = _extract_battle_overlay(context, packets, local_team_id)
+    battle_state = _extract_battle_overlay(context, packets, local_team_id, session_map)
     diagnostics = {
         "session_map_size": len(session_map),
         "session_map_source": session_map_source,
@@ -1843,6 +2733,8 @@ def extract_events(context: ReplayContext, packets: List[DecodedPacket]) -> Repl
         "kill_feed": len(battle_state.get("kill_feed", [])),
         "chat_messages": len(battle_state.get("chat_messages", [])),
         "smoke_snapshots": len(battle_state.get("smoke_timeline", [])),
+        "sensor_events": len(battle_state.get("sensor_events", [])),
+        "consumable_events": len(battle_state.get("consumable_events", [])),
         "secondary_artillery_groups": int(battle_state.get("secondary_artillery_groups", 0) or 0),
         "secondary_artillery_dropped_shots": int(battle_state.get("secondary_artillery_dropped_shots", 0) or 0),
         "shell_kinds_resolved": int(battle_state.get("shell_kinds_resolved", 0) or 0),
