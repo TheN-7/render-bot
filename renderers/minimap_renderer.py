@@ -4937,7 +4937,12 @@ def _draw_sensor_overlay(
             continue
         last_t = times[idx]
         spotted = (t - last_t) <= spot_timeout and not bool(track.get("always_unspotted", False))
-        if side == "enemy" and not spotted:
+        kind = str(sensor.get("kind") or "").lower()
+        # For enemy ships, keep standard spotting rules for most overlays, but
+        # ALWAYS show active radar/hydro circles even if the ship itself is not
+        # currently spotted. This makes enemy radar usage visible in the
+        # minimap timeline.
+        if side == "enemy" and not spotted and kind not in ("radar", "hydro"):
             continue
         state = _ship_state_at(track, t)
         if state is None:
@@ -4951,7 +4956,6 @@ def _draw_sensor_overlay(
         radius_px = max(6, int(radius_world / max(1e-6, world_span) * usable_span * 0.92))
 
         base = COLOR_FRIENDLY if side == "friendly" else COLOR_ENEMY if side == "enemy" else (210, 210, 210)
-        kind = str(sensor.get("kind") or "").lower()
         if kind == "radar":
             outline_alpha = 150
             fill_alpha = 24
