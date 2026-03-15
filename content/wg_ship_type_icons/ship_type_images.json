@@ -1,0 +1,27 @@
+{
+  "Destroyer": {
+    "image_premium": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Destroyer/premium_9ffc494df739f989c98f2dd3a4e40887299a30d3dfd5b146e85d7ddd08f63744.png",
+    "image": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Destroyer/standard_357acc9fc0e2f7d98f047c99edffad359a8c45f2093024400fef2b9abbaf3a59.png",
+    "image_elite": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Destroyer/elite_d4fa1bfbf1f8ca4c5a9ae5e92ccfd4ba66369d93b4e6e3f3880551059cecda22.png"
+  },
+  "AirCarrier": {
+    "image_premium": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/AirCarrier/premium_4516ee494bb0396e51796cebff5e45c3f448d9790e0a58082057b8949ed9a3f8.png",
+    "image": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/AirCarrier/standard_9f372d47b4fa5b5bbd79a3aaac816cb8d5343fa93949cce8934d94b84751b88e.png",
+    "image_elite": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/AirCarrier/elite_8c5dbbe68e07b0a72c57a04a3d98baadc528f058be3a2e7b198fabeb07172330.png"
+  },
+  "Battleship": {
+    "image_premium": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Battleship/premium_1d0cabf1997104fd727039ab9c09819260343ab3a9e862f361434d7f42270eb3.png",
+    "image": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Battleship/standard_1468cf2ed1dc129ec4db4d9d18306bd06abb0d6b08c805dc94fe23ce6187c119.png",
+    "image_elite": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Battleship/elite_9fe36e82e214ad6f8dcc305bf8d10d3d0fe35c64628611d9a39f3af01382a567.png"
+  },
+  "Cruiser": {
+    "image_premium": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Cruiser/premium_1114542bcd311c388080eea3a4d54a7ea6fdc8706b019fcbf16ace9951f3a000.png",
+    "image": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Cruiser/standard_44b68c918edc534e1367cb6512e9e8cc4d28aa54d237db820f1bbba867266742.png",
+    "image_elite": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Cruiser/elite_127b2a5f66ce04425e45721020a88ed6d6cad202e186f39577cbcd91dd205fe3.png"
+  },
+  "Submarine": {
+    "image_premium": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Submarine/premium_2da34d2e1f5f4934406d60eb020c1b107857405618c03bbe7710d502b24a5b8b.png",
+    "image": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Submarine/standard_261525e5aae827700eaad3b5c3ab72d1721446ecab80226394fd30e9186d8a2d.png",
+    "image_elite": "https://wows-gloss-icons.wgcdn.co/icons/vehicle/types/Submarine/elite_48fb6cc4ac86f63e8833e16ac1f7e996f86da5884c3e1b87da9b5ea324f3d5e4.png"
+  }
+}

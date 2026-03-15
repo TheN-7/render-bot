@@ -109,6 +109,7 @@ def _save_mp4(
     *,
     preset: str | None = None,
     crf: str | None = None,
+    threads: int | None = None,
 ) -> None:
     iterator = iter(frames)
     try:
@@ -156,13 +157,16 @@ def _save_mp4(
         imageio = None
 
     if imageio is not None and np is not None:
+        output_params = ["-crf", crf, "-preset", preset, "-movflags", "+faststart"]
+        if threads is not None and int(threads) > 0:
+            output_params.extend(["-threads", str(int(threads))])
         writer = imageio.get_writer(
             out_mp4,
             fps=fps,
             codec="libx264",
             macro_block_size=None,
             pixelformat="yuv420p",
-            output_params=["-crf", crf, "-preset", preset, "-movflags", "+faststart"],
+            output_params=output_params,
         )
         try:
             _emit("encoding", 0, total)
@@ -205,6 +209,11 @@ def _save_mp4(
             crf,
             "-preset",
             preset,
+            *(
+                ["-threads", str(int(threads))]
+                if threads is not None and int(threads) > 0
+                else []
+            ),
             "-movflags",
             "+faststart",
             "-pix_fmt",
@@ -244,6 +253,7 @@ def stack_mp4_side_by_side(
     progress: ProgressCallback | None = None,
     preset: str | None = None,
     crf: str | None = None,
+    threads: int | None = None,
 ) -> None:
     ffmpeg = _ffmpeg_executable()
     if not ffmpeg:
@@ -286,6 +296,11 @@ def stack_mp4_side_by_side(
             crf,
             "-preset",
             preset,
+            *(
+                ["-threads", str(int(threads))]
+                if threads is not None and int(threads) > 0
+                else []
+            ),
             "-movflags",
             "+faststart",
             "-pix_fmt",
@@ -318,6 +333,7 @@ def render_minimap(
     quality: float = QUALITY_SCALE,
     mp4_preset: str | None = None,
     mp4_crf: str | None = None,
+    mp4_threads: int | None = None,
     show_labels: bool = True,
     show_grid: bool = True,
     bg_color: Tuple[int, int, int] = (10, 20, 40),
@@ -368,6 +384,7 @@ def render_minimap(
         total_frames=total_frames,
         preset=mp4_preset,
         crf=mp4_crf,
+        threads=mp4_threads,
     )
     if progress is not None:
         progress("done", total_frames, total_frames)
@@ -424,6 +441,7 @@ def main() -> None:
     parser.add_argument("--quality", type=float, default=QUALITY_SCALE, help="Supersampling scale (default: 1.5)")
     parser.add_argument("--preset", default=None, help="FFmpeg preset (e.g. veryfast, fast, medium, slow)")
     parser.add_argument("--crf", default=None, help="FFmpeg CRF value (e.g. 17..23)")
+    parser.add_argument("--threads", type=int, default=None, help="FFmpeg thread limit (lower = less CPU)")
     parser.add_argument("--no-labels", action="store_true")
     parser.add_argument("--no-grid", action="store_true")
     parser.add_argument("--dump-json", default=None, help="Dump extracted JSON")
@@ -446,6 +464,7 @@ def main() -> None:
             quality=args.quality,
             mp4_preset=args.preset,
             mp4_crf=args.crf,
+            mp4_threads=args.threads,
             show_labels=not args.no_labels,
             show_grid=not args.no_grid,
             bg_color=bg,

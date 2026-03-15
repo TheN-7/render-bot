@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -59,12 +60,14 @@ def _load_bot_token() -> str:
 def _render_settings() -> dict[str, Any]:
     data = _load_bot_config()
     profile = str(data.get("render_profile", "hosted") or "").strip().lower()
+    cpu_count = os.cpu_count() or 2
     settings = {
         "profile": profile,
         "quality": float(data.get("render_quality", QUALITY_SCALE)),
         "preset": str(data.get("render_preset", "slow")),
         "crf": str(data.get("render_crf", "17")),
         "fps": int(data.get("render_fps", DEFAULT_RENDER_FPS)),
+        "threads": data.get("render_threads"),
     }
     if profile == "hosted":
         if "render_quality" not in data:
@@ -75,6 +78,13 @@ def _render_settings() -> dict[str, Any]:
             settings["crf"] = "19"
         if "render_fps" not in data:
             settings["fps"] = DEFAULT_RENDER_FPS
+        if "render_threads" not in data:
+            settings["threads"] = max(1, min(4, cpu_count // 2))
+    if settings.get("threads") is not None:
+        try:
+            settings["threads"] = max(1, int(settings["threads"]))
+        except Exception:
+            settings["threads"] = None
     return settings
 
 
@@ -541,46 +551,57 @@ async def render_command(
                 render_speed = speed_for_output_duration(battle_seconds, settings["fps"], output_length_s)
 
                 out_mp4 = tmp / f"{stem}_minimap.mp4"
+                cleanup_paths = [out_mp4]
 
-                result = await asyncio.to_thread(
-                    render_minimap,
-                    str(replay_path),
-                    canonical=canonical,
-                    out_mp4=str(out_mp4),
-                    size=DEFAULT_RENDER_SIZE,
-                    fps=settings["fps"],
-                    speed=render_speed,
-                    target_duration_s=None,
-                    quality=float(settings["quality"]),
-                    mp4_preset=str(settings["preset"]),
-                    mp4_crf=str(settings["crf"]),
-                    show_labels=True,
-                    show_grid=True,
-                    progress=_progress_callback,
-                )
-                await _set_progress("done", 1, 1)
-                await progress_task
-
-                file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
-                file_size = out_mp4.stat().st_size
-                if file_size > file_limit:
-                    await interaction.edit_original_response(
-                        embed=None,
-                        content=(
-                            f"Render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
-                            f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
-                        ),
-                        attachments=[],
+                try:
+                    result = await asyncio.to_thread(
+                        render_minimap,
+                        str(replay_path),
+                        canonical=canonical,
+                        out_mp4=str(out_mp4),
+                        size=DEFAULT_RENDER_SIZE,
+                        fps=settings["fps"],
+                        speed=render_speed,
+                        target_duration_s=None,
+                        quality=float(settings["quality"]),
+                        mp4_preset=str(settings["preset"]),
+                        mp4_crf=str(settings["crf"]),
+                        mp4_threads=settings.get("threads"),
+                        show_labels=True,
+                        show_grid=True,
+                        progress=_progress_callback,
                     )
-                    return
+                    await _set_progress("done", 1, 1)
+                    await progress_task
 
-                with out_mp4.open("rb") as fp:
-                    discord_file = discord.File(fp, filename=out_mp4.name)
-                    await interaction.delete_original_response()
-                    await interaction.followup.send(
-                        embed=_result_embed(filename, output_length_label, result.get("canonical", {}) or {}),
-                        file=discord_file,
-                    )
+                    file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
+                    file_size = out_mp4.stat().st_size
+                    if file_size > file_limit:
+                        await interaction.edit_original_response(
+                            embed=None,
+                            content=(
+                                f"Render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
+                                f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
+                            ),
+                            attachments=[],
+                        )
+                        return
+
+                    with out_mp4.open("rb") as fp:
+                        discord_file = discord.File(fp, filename=out_mp4.name)
+                        await interaction.delete_original_response()
+                        await interaction.followup.send(
+                            embed=_result_embed(filename, output_length_label, result.get("canonical", {}) or {}),
+                            file=discord_file,
+                        )
+                finally:
+                    for path in cleanup_paths:
+                        try:
+                            path.unlink()
+                        except FileNotFoundError:
+                            pass
+                        except Exception:
+                            LOG.exception("Failed to delete render output %s", path)
         except Exception as exc:
             LOG.exception("Render failed")
             if not progress_task.done():
@@ -721,6 +742,7 @@ async def render_dual_command(
                 left_mp4 = tmp / f"{stem_a}_left.mp4"
                 right_mp4 = tmp / f"{stem_b}_right.mp4"
                 out_mp4 = tmp / _dual_output_filename(stem_a, stem_b)
+                cleanup_paths = [left_mp4, right_mp4, out_mp4]
 
                 def _progress_a(stage: str, current: int, total: int) -> None:
                     mapped = "encoding_a" if stage == "encoding" else "rendering_a"
@@ -730,72 +752,84 @@ async def render_dual_command(
                     mapped = "encoding_b" if stage == "encoding" else "rendering_b"
                     _progress_callback(mapped, current, total)
 
-                await asyncio.to_thread(
-                    render_minimap,
-                    str(replay_a_path),
-                    canonical=canonical_a,
-                    out_mp4=str(left_mp4),
-                    size=DUAL_RENDER_SIZE,
-                    fps=settings["fps"],
-                    speed=render_speed,
-                    target_duration_s=None,
-                    quality=float(settings["quality"]),
-                    mp4_preset=str(settings["preset"]),
-                    mp4_crf=str(settings["crf"]),
-                    show_labels=True,
-                    show_grid=True,
-                    progress=_progress_a,
-                )
-                await asyncio.to_thread(
-                    render_minimap,
-                    str(replay_b_path),
-                    canonical=canonical_b,
-                    out_mp4=str(right_mp4),
-                    size=DUAL_RENDER_SIZE,
-                    fps=settings["fps"],
-                    speed=render_speed,
-                    target_duration_s=None,
-                    quality=float(settings["quality"]),
-                    mp4_preset=str(settings["preset"]),
-                    mp4_crf=str(settings["crf"]),
-                    show_labels=True,
-                    show_grid=True,
-                    progress=_progress_b,
-                )
-                await asyncio.to_thread(
-                    stack_mp4_side_by_side,
-                    str(left_mp4),
-                    str(right_mp4),
-                    str(out_mp4),
-                    fps=settings["fps"],
-                    output_duration_s=output_length_s,
-                    progress=_progress_callback,
-                    preset=str(settings["preset"]),
-                    crf=str(settings["crf"]),
-                )
-                await _set_progress("done", 1, 1)
-                await progress_task
-
-                file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
-                file_size = out_mp4.stat().st_size
-                if file_size > file_limit:
-                    await interaction.edit_original_response(
-                        embed=None,
-                        content=(
-                            f"Dual render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
-                            f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
-                        ),
-                        attachments=[],
+                try:
+                    await asyncio.to_thread(
+                        render_minimap,
+                        str(replay_a_path),
+                        canonical=canonical_a,
+                        out_mp4=str(left_mp4),
+                        size=DUAL_RENDER_SIZE,
+                        fps=settings["fps"],
+                        speed=render_speed,
+                        target_duration_s=None,
+                        quality=float(settings["quality"]),
+                        mp4_preset=str(settings["preset"]),
+                        mp4_crf=str(settings["crf"]),
+                        mp4_threads=settings.get("threads"),
+                        show_labels=True,
+                        show_grid=True,
+                        progress=_progress_a,
                     )
-                    return
-
-                with out_mp4.open("rb") as fp:
-                    discord_file = discord.File(fp, filename=out_mp4.name)
-                    await interaction.delete_original_response()
-                    await interaction.followup.send(
-                        embed=_dual_result_embed(filename_a, filename_b, output_length_label, canonical_a, canonical_b),
-                        file=discord_file,
+                    await asyncio.to_thread(
+                        render_minimap,
+                        str(replay_b_path),
+                        canonical=canonical_b,
+                        out_mp4=str(right_mp4),
+                        size=DUAL_RENDER_SIZE,
+                        fps=settings["fps"],
+                        speed=render_speed,
+                        target_duration_s=None,
+                        quality=float(settings["quality"]),
+                        mp4_preset=str(settings["preset"]),
+                        mp4_crf=str(settings["crf"]),
+                        mp4_threads=settings.get("threads"),
+                        show_labels=True,
+                        show_grid=True,
+                        progress=_progress_b,
                     )
+                    await asyncio.to_thread(
+                        stack_mp4_side_by_side,
+                        str(left_mp4),
+                        str(right_mp4),
+                        str(out_mp4),
+                        fps=settings["fps"],
+                        output_duration_s=output_length_s,
+                        progress=_progress_callback,
+                        preset=str(settings["preset"]),
+                        crf=str(settings["crf"]),
+                        threads=settings.get("threads"),
+                    )
+                    await _set_progress("done", 1, 1)
+                    await progress_task
+
+                    file_limit = int(getattr(interaction.guild, "filesize_limit", DEFAULT_FILE_LIMIT) or DEFAULT_FILE_LIMIT)
+                    file_size = out_mp4.stat().st_size
+                    if file_size > file_limit:
+                        await interaction.edit_original_response(
+                            embed=None,
+                            content=(
+                                f"Dual render finished, but the MP4 is {file_size / (1024 * 1024):.1f} MB and exceeds this Discord "
+                                f"upload limit of {file_limit / (1024 * 1024):.1f} MB."
+                            ),
+                            attachments=[],
+                        )
+                        return
+
+                    with out_mp4.open("rb") as fp:
+                        discord_file = discord.File(fp, filename=out_mp4.name)
+                        await interaction.delete_original_response()
+                        await interaction.followup.send(
+                            embed=_dual_result_embed(filename_a, filename_b, output_length_label, canonical_a, canonical_b),
+                            file=discord_file,
+                        )
+                finally:
+                    for path in cleanup_paths:
+                        try:
+                            path.unlink()
+                        except FileNotFoundError:
+                            pass
+                        except Exception:
+                            LOG.exception("Failed to delete render output %s", path)
         except Exception as exc:
             LOG.exception("Dual render failed")
             if not progress_task.done():

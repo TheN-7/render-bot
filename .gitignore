@@ -43,6 +43,9 @@ _debug_frame.png
 content/*
 !content/overviewmaps.txt
 !content/wg_battlearenas_cache.json
+!content/gameparams_consumables.json
+!content/wg_ship_type_icons/
+!content/wg_ship_type_icons/**
 
 # gui/: keep only the assets the renderer uses; ignore everything else
 gui/*
@@ -50,6 +53,8 @@ gui/*
 !gui/battle_hud/
 !gui/battle_hud/icon_frag/
 !gui/battle_hud/icon_frag/**
+!gui/battle_hud/own_ship_health/
+!gui/battle_hud/own_ship_health/**
 !gui/battle_hud/GameParams.json
 !gui/ribbons/
 !gui/ribbons/**
