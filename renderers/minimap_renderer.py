@@ -4869,7 +4869,20 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
 
     _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
-    _draw_sensor_overlay(img, draw, sensor_events, render_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect, spot_timeout=spot_timeout)
+    _draw_sensor_overlay(
+        img,
+        draw,
+        sensor_events,
+        render_tracks,
+        battle_end,
+        half,
+        canvas_size,
+        margin,
+        world_bounds=world_bounds,
+        map_rect=map_rect,
+        spot_timeout=spot_timeout,
+        death_times=death_times,
+    )
     _draw_torpedoes(draw, torpedo_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadrons(img, draw, squadron_tracks, battle_end, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
     _draw_squadron_legend(img, squadron_tracks, canvas_size, margin, map_rect=map_rect)
@@ -4911,16 +4924,20 @@ def render_static(canonical: Dict[str, Any], canvas_size: int = 1024, show_label
             size=8,
             sunk=sunk,
             consumable_kind=(
-                _active_sensor_kind(
-                    sensor_by_entity,
-                    _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
-                    battle_end,
+                (
+                    _active_sensor_kind(
+                        sensor_by_entity,
+                        _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
+                        battle_end,
+                    )
+                    or _active_consumable_kind(
+                        consumable_by_entity,
+                        _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
+                        battle_end,
+                    )
                 )
-                or _active_consumable_kind(
-                    consumable_by_entity,
-                    _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
-                    battle_end,
-                )
+                if not sunk
+                else None
             ),
         )
         if health is not None:
@@ -4962,6 +4979,7 @@ def _draw_sensor_overlay(
     world_bounds: Tuple[float, float, float, float] | None = None,
     map_rect: Tuple[int, int, int, int] | None = None,
     spot_timeout: float = 6.0,
+    death_times: Dict[str, float] | None = None,
 ) -> None:
     if not sensors:
         return
@@ -4997,6 +5015,10 @@ def _draw_sensor_overlay(
         track = track_by_id.get(int(entity_id))
         if not track:
             continue
+        if death_times:
+            death_t = death_times.get(str(entity_id))
+            if death_t is not None and float(t) >= float(death_t):
+                continue
         side = str(track.get("team_side") or "unknown")
         points = list(track.get("points", []) or [])
         if not points:
@@ -5187,7 +5209,20 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
         smoke_snapshot = _smoke_snapshot_at(smoke_timeline, t_replay)
         _draw_capture_overlay(img, draw, canonical, capture_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_smoke_overlay(img, draw, smoke_snapshot, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
-        _draw_sensor_overlay(img, draw, sensor_events, render_tracks, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect, spot_timeout=spot_timeout)
+        _draw_sensor_overlay(
+            img,
+            draw,
+            sensor_events,
+            render_tracks,
+            t_replay,
+            half,
+            canvas_size,
+            margin,
+            world_bounds=world_bounds,
+            map_rect=map_rect,
+            spot_timeout=spot_timeout,
+            death_times=death_times,
+        )
         _draw_artillery_traces(img, artillery_traces, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_torpedoes(draw, torpedo_tracks, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
         _draw_squadrons(img, draw, squadron_tracks, t_replay, half, canvas_size, margin, world_bounds=world_bounds, map_rect=map_rect)
@@ -5256,8 +5291,20 @@ def iter_animation_frames(canonical: Dict[str, Any], canvas_size: int = 600, spe
                 size=marker_size,
                 sunk=sunk,
                 consumable_kind=(
-                    _active_sensor_kind(sensor_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t_replay)
-                    or _active_consumable_kind(consumable_by_entity, _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0, t_replay)
+                    (
+                        _active_sensor_kind(
+                            sensor_by_entity,
+                            _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
+                            t_replay,
+                        )
+                        or _active_consumable_kind(
+                            consumable_by_entity,
+                            _safe_int(track.get("entity_id")) or _safe_int(entity_key) or 0,
+                            t_replay,
+                        )
+                    )
+                    if not sunk
+                    else None
                 ),
             )
             if health is not None:
